@@ -1,0 +1,466 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://topic14-ecc.local/schema/data_schema_v1.json",
+  "title": "Data Schema chuẩn — Topic 14: ECC Cryptanalysis (D1, D2, D3, D4, D6)",
+  "schema_version": "1.0.0",
+  "description": "Định nghĩa schema chuẩn cho 5 tập dữ liệu dùng chung giữa Track A (generic search), Track C (nonce reuse) và Track D (invalid-curve / small-subgroup). Tham chiếu: docs/threat_model.md, curves/math_notes.md, docs/experimental_design.md. Mỗi dataset được lưu dưới dạng CSV (1 dòng = 1 object khớp row_schema); file này là nguồn chân lý (source of truth) cho tên cột, kiểu dữ liệu và ràng buộc.",
+
+  "conventions": {
+    "encoding": "UTF-8, không BOM",
+    "big_integers": "Mọi số lớn (p, a, b, #E, n, h, d, r, s, x, y, ...) lưu dưới dạng chuỗi thập phân (decimal string), KHÔNG dùng kiểu number của JSON/CSV để tránh mất độ chính xác với số 256-bit.",
+    "hex_strings": "msg_hash, một số id dẫn xuất lưu dạng hex thường (lowercase), không có tiền tố '0x'.",
+    "null_and_na": "Giá trị không áp dụng (NA) hoặc chưa đo được biểu diễn bằng JSON null; khi xuất ra CSV, ô tương ứng để trống.",
+    "booleans": "true/false (chữ thường).",
+    "timestamps": "ISO-8601 UTC, định dạng 'YYYY-MM-DDThh:mm:ssZ'.",
+    "git_commit": "Hash commit (ngắn ≥7 hex hoặc đầy đủ 40 hex) của code sinh ra bản ghi — bắt buộc với mọi dataset để tái lập.",
+    "nested_values_in_csv": "Trường kiểu object/array (vd order_factorization) khi lưu trong file .csv được serialize thành chuỗi JSON trong 1 ô; khi đọc bằng pandas cần json.loads lại.",
+    "id_format": "Các *_id là chuỗi duy nhất trong phạm vi dataset, khuyến nghị dạng '<prefix>-<8 hex ngẫu nhiên hoặc tăng dần>' (vd 'crv-00000001', 'sig-0000001a')."
+  },
+
+  "$defs": {
+    "BigIntString": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "Số nguyên không âm lớn, lưu dạng chuỗi thập phân."
+    },
+    "NullableBigIntString": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]+$"
+    },
+    "HexString": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$"
+    },
+    "NullableHexString": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]+$"
+    },
+    "GitCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "NonNegativeInt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "NullableNonNegativeInt": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "FactorizationEntry": {
+      "type": "object",
+      "properties": {
+        "prime": { "$ref": "#/$defs/BigIntString" },
+        "exponent": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["prime", "exponent"],
+      "additionalProperties": false
+    },
+    "CurveCategory": {
+      "type": "string",
+      "enum": [
+        "safe_prime_order",
+        "smooth_order",
+        "cofactor_gt1",
+        "anomalous",
+        "supersingular",
+        "invalid_curve_component",
+        "standard_named"
+      ],
+      "description": "safe_prime_order: h=1, n nguyên tố, dùng cho Track A/negative control. smooth_order: n có thừa số nhỏ, dùng cho Pohlig-Hellman. cofactor_gt1: h>1, dùng minh hoạ small-subgroup. anomalous/supersingular: trường hợp đặc biệt (lý thuyết/Track B mở rộng). invalid_curve_component: curve E' dùng để sinh điểm tấn công invalid-curve (Track D). standard_named: P-256/secp256k1/X25519/Ed25519 — chỉ metadata, không chạy tấn công thật (negative control)."
+    },
+    "Algorithm": {
+      "type": "string",
+      "enum": ["exhaustive", "bsgs", "pollard_rho", "pohlig_hellman"]
+    },
+    "NonceClass": {
+      "type": "string",
+      "enum": [
+        "reuse_constant",
+        "reuse_restart",
+        "reuse_sparse",
+        "low_entropy",
+        "random_ok",
+        "deterministic"
+      ],
+      "description": "Khớp 4 failure mode (F1–F4) + control ngẫu nhiên (random_ok) + bản vá RFC 6979 (deterministic) trong docs/experimental_design.md Track C."
+    },
+    "SignerVersion": {
+      "type": "string",
+      "enum": [
+        "vulnerable_constant",
+        "vulnerable_restart_seed",
+        "vulnerable_sparse_reuse",
+        "vulnerable_low_entropy",
+        "random_ok",
+        "rfc6979"
+      ]
+    },
+    "SignatureSource": {
+      "type": "string",
+      "enum": ["synthetic_corpus", "jwt_system_demo"]
+    },
+    "PointClass": {
+      "type": "string",
+      "enum": [
+        "valid",
+        "infinity",
+        "out_of_range",
+        "wrong_curve",
+        "small_subgroup",
+        "on_curve_not_in_G",
+        "twist_point"
+      ],
+      "description": "6+1 lớp điểm kiểm thử theo docs/experimental_design.md D.4."
+    },
+    "SubgroupClass": {
+      "type": "string",
+      "enum": ["in_subgroup", "small_order", "outside", "na"]
+    },
+    "ValidatorVersion": {
+      "type": "string",
+      "enum": ["v0_none", "v1_oncurve", "v2_oncurve_subgroup", "v2_uniform_response"]
+    },
+    "ValidatorResult": {
+      "type": "string",
+      "enum": ["accept", "reject"]
+    },
+    "OracleType": {
+      "type": "string",
+      "enum": ["value_oracle", "accept_reject_oracle", "na"]
+    },
+    "Track": {
+      "type": "string",
+      "enum": ["A", "C", "D"]
+    },
+    "MetricPhase": {
+      "type": "string",
+      "enum": ["baseline", "vulnerable", "patched", "na"]
+    },
+    "MetricName": {
+      "type": "string",
+      "enum": [
+        "cpu_cycles",
+        "wall_time_ns",
+        "recovery_time_ms",
+        "detect_time_ms",
+        "oracle_queries",
+        "bits_leaked",
+        "candidate_space_bits_before",
+        "candidate_space_bits_after",
+        "overhead_ratio",
+        "sigs_to_first_repeat",
+        "forged_token_accepted",
+        "response_class_uniform"
+      ],
+      "description": "Tập tên chỉ số chuẩn hoá để mọi script ghi vào D6 dùng chung một vocabulary, phục vụ scripts/plot_all_charts.py."
+    },
+    "RefDataset": {
+      "type": "string",
+      "enum": ["D1", "D2", "D3", "D4", "none"]
+    }
+  },
+
+  "datasets": {
+    "D1": {
+      "file": "data/D1_curves.csv",
+      "description": "Tham số domain (toy curve) dùng cho Track A (baseline, smooth order) và làm curve nền cho Track D (curve_main/curve_cof, bao gồm cả curve invalid-curve component E').",
+      "owners": ["A (Thành)", "C"],
+      "produced_by": [
+        "curves/toy_curve_gen.py",
+        "curves/gen_smooth_curves.py",
+        "validation/gen_invalid_curves.py"
+      ],
+      "consumed_by": [
+        "curves/exhaustive_search.py",
+        "curves/bsgs.py",
+        "curves/pollard_rho.py",
+        "curves/pohlig_hellman.py",
+        "validation/subgroup_ecdlp.py",
+        "data/D4_validation.csv (qua curve_id / source_curve_id)"
+      ],
+      "primary_key": ["curve_id"],
+      "foreign_keys": [],
+      "row_schema": {
+        "type": "object",
+        "properties": {
+          "curve_id": { "type": "string", "description": "Khoá chính, duy nhất trong D1." },
+          "p": { "$ref": "#/$defs/BigIntString", "description": "Số nguyên tố của trường F_p." },
+          "a": { "$ref": "#/$defs/BigIntString", "description": "Hệ số a của E: y^2 = x^3 + ax + b." },
+          "b": { "$ref": "#/$defs/BigIntString", "description": "Hệ số b." },
+          "discriminant": { "$ref": "#/$defs/BigIntString", "description": "(4a^3 + 27b^2) mod p." },
+          "discriminant_ok": { "type": "boolean", "description": "true nếu discriminant != 0 (curve không singular)." },
+          "E_count": { "$ref": "#/$defs/BigIntString", "description": "#E(F_p), tổng số điểm kể cả điểm vô cực." },
+          "E_count_factorization": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/FactorizationEntry" },
+            "description": "Phân tích thừa số nguyên tố của #E."
+          },
+          "base_point_x": { "$ref": "#/$defs/BigIntString" },
+          "base_point_y": { "$ref": "#/$defs/BigIntString" },
+          "subgroup_n": { "$ref": "#/$defs/BigIntString", "description": "Bậc n = ord(G)." },
+          "n_bits": { "$ref": "#/$defs/NonNegativeInt", "description": "Số bit xấp xỉ của n (dùng để nhóm thí nghiệm Track A)." },
+          "n_factorization": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/FactorizationEntry" },
+            "description": "Phân tích thừa số nguyên tố của n — dùng cho Pohlig–Hellman."
+          },
+          "cofactor_h": { "$ref": "#/$defs/BigIntString", "description": "h = #E / n." },
+          "largest_prime_factor_n": { "$ref": "#/$defs/BigIntString", "description": "q_max — ước nguyên tố lớn nhất của n, quyết định W_eff của Pohlig–Hellman." },
+          "is_anomalous": { "type": "boolean", "description": "true nếu #E == p." },
+          "is_supersingular": { "type": "boolean" },
+          "category": { "$ref": "#/$defs/CurveCategory" },
+          "source_for_point_class": {
+            "type": ["string", "null"],
+            "enum": ["wrong_curve", "small_subgroup", null],
+            "description": "Chỉ đặt khi category=invalid_curve_component: curve này được tạo ra để cấp điểm cho lớp point_class nào trong D4."
+          },
+          "small_order_available": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/BigIntString" },
+            "description": "Danh sách các bậc nhỏ r_i mà curve này có thể cấp điểm (dùng khi category=invalid_curve_component)."
+          },
+          "generation_method": { "type": "string", "description": "Tên script/hàm sinh curve, vd 'gen_smooth_curves.v1'." },
+          "seed": { "$ref": "#/$defs/NonNegativeInt" },
+          "notes": { "type": ["string", "null"] },
+          "git_commit": { "$ref": "#/$defs/GitCommit" },
+          "created_at": { "$ref": "#/$defs/Timestamp" }
+        },
+        "required": [
+          "curve_id", "p", "a", "b", "discriminant", "discriminant_ok",
+          "E_count", "E_count_factorization", "base_point_x", "base_point_y",
+          "subgroup_n", "n_bits", "n_factorization", "cofactor_h",
+          "largest_prime_factor_n", "is_anomalous", "is_supersingular",
+          "category", "generation_method", "seed", "git_commit", "created_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+
+    "D2": {
+      "file": "data/D2_ecdlp_benchmarks.csv",
+      "description": "Kết quả benchmark các thuật toán ECDLP (exhaustive, BSGS, Pollard-rho, Pohlig–Hellman) trên các curve trong D1 — Track A.",
+      "owners": ["C", "A (Thành)"],
+      "produced_by": [
+        "scripts/run_ecdlp_baselines.py",
+        "curves/test_pohlig_hellman.py"
+      ],
+      "consumed_by": ["docs/charts/ecdlp_bsgs.png", "scripts/plot_all_charts.py", "docs/track_a_report.md"],
+      "primary_key": ["record_id"],
+      "foreign_keys": [
+        { "field": "curve_id", "references": "D1.curve_id" }
+      ],
+      "row_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": { "type": "string" },
+          "curve_id": { "type": "string" },
+          "algorithm": { "$ref": "#/$defs/Algorithm" },
+          "n_bits": { "$ref": "#/$defs/NonNegativeInt" },
+          "trial": { "$ref": "#/$defs/NonNegativeInt" },
+          "seed": { "$ref": "#/$defs/NonNegativeInt" },
+          "d_true": { "$ref": "#/$defs/BigIntString", "description": "Scalar bí mật dùng cho trial (toy, chỉ để tái lập/tự kiểm)." },
+          "d_recovered": { "$ref": "#/$defs/NullableBigIntString" },
+          "recovered": { "type": "boolean" },
+          "operations": { "$ref": "#/$defs/NonNegativeInt", "description": "Tổng số phép add+double của thuật toán." },
+          "restarts": { "$ref": "#/$defs/NullableNonNegativeInt", "description": "Số lần Pollard-rho phải khởi động lại (null nếu không áp dụng)." },
+          "cpu_cycles": { "$ref": "#/$defs/NullableNonNegativeInt", "description": "null nếu chạy bằng bản Python không đo được cycles." },
+          "wall_time_ns": { "$ref": "#/$defs/NonNegativeInt" },
+          "memory_peak_kib": { "type": "number", "minimum": 0 },
+          "memory_entries": { "$ref": "#/$defs/NullableNonNegativeInt", "description": "Kích thước bảng băm (BSGS); null với exhaustive/rho." },
+          "timeout": { "type": "boolean" },
+          "algo_params": {
+            "type": "object",
+            "description": "Tham số riêng của thuật toán (vd {\"m\": 4096} cho BSGS, {\"dp_bits\": 6, \"num_walks\": 20} cho rho, {\"factors\": [...]}, cho PH).",
+            "additionalProperties": true
+          },
+          "host_id": { "type": "string" },
+          "git_commit": { "$ref": "#/$defs/GitCommit" },
+          "created_at": { "$ref": "#/$defs/Timestamp" }
+        },
+        "required": [
+          "record_id", "curve_id", "algorithm", "n_bits", "trial", "seed",
+          "d_true", "recovered", "operations", "wall_time_ns",
+          "memory_peak_kib", "timeout", "algo_params", "host_id",
+          "git_commit", "created_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+
+    "D3": {
+      "file": "data/D3_signatures.csv",
+      "description": "Corpus chữ ký ECDSA (hợp lệ, tái dùng nonce theo các failure mode, và chữ ký đã vá RFC 6979) — Track C.",
+      "owners": ["B", "C"],
+      "produced_by": [
+        "signatures/vulnerable_signer.py",
+        "signatures/rfc6979_signer.py",
+        "system-demos/jwt-es256/get_tokens.py"
+      ],
+      "consumed_by": [
+        "signatures/repeated_r_detector.py",
+        "signatures/nonce_reuse_attacker.py",
+        "signatures/test_nonce_attack.py",
+        "docs/track_c_phase1.md",
+        "docs/track_c_phase2.md"
+      ],
+      "primary_key": ["sig_id"],
+      "foreign_keys": [],
+      "row_schema": {
+        "type": "object",
+        "properties": {
+          "sig_id": { "type": "string" },
+          "run_id": { "type": "string", "description": "Nhóm các chữ ký cùng một lần chạy thí nghiệm (cùng mode, N, rho)." },
+          "key_id": { "type": "string", "description": "Khoá lab dùng để ký (định danh, KHÔNG chứa giá trị khoá thật)." },
+          "curve": { "type": "string", "enum": ["P-256", "secp256k1", "toy"], "description": "Curve dùng cho chữ ký (ES256 dùng P-256)." },
+          "signer_version": { "$ref": "#/$defs/SignerVersion" },
+          "nonce_class": { "$ref": "#/$defs/NonceClass" },
+          "msg_hash": { "$ref": "#/$defs/HexString", "description": "H(m), hex thường." },
+          "r": { "$ref": "#/$defs/BigIntString" },
+          "s": { "$ref": "#/$defs/BigIntString" },
+          "sig_index": { "$ref": "#/$defs/NonNegativeInt", "description": "Thứ tự chữ ký trong run_id (dùng tính sigs_to_first_repeat)." },
+          "repeated_r": { "type": "boolean", "description": "Ground truth: chữ ký này có r trùng với ít nhất 1 chữ ký khác cùng key_id." },
+          "repeated_r_group_id": { "type": ["string", "null"], "description": "Id nhóm các chữ ký cùng trùng r (null nếu repeated_r=false)." },
+          "leaked_bits_class": { "type": ["string", "null"], "description": "Dự phòng cho Track E (bias/HNP) — để null ở Track C." },
+          "jti": { "type": ["string", "null"], "description": "JWT ID khi chữ ký sinh ra từ system-demos/jwt-es256." },
+          "source": { "$ref": "#/$defs/SignatureSource" },
+          "seed": { "$ref": "#/$defs/NonNegativeInt" },
+          "timestamp": { "$ref": "#/$defs/Timestamp" },
+          "git_commit": { "$ref": "#/$defs/GitCommit" }
+        },
+        "required": [
+          "sig_id", "run_id", "key_id", "curve", "signer_version",
+          "nonce_class", "msg_hash", "r", "s", "sig_index", "repeated_r",
+          "source", "seed", "timestamp", "git_commit"
+        ],
+        "additionalProperties": false
+      }
+    },
+
+    "D4": {
+      "file": "data/D4_validation.csv",
+      "description": "Corpus điểm kiểm thử validation (point_class) × kết quả từng phiên bản validator — Track D. Mỗi điểm được test lặp lại qua nhiều validator_version (long format: 1 điểm × 1 validator = 1 dòng).",
+      "owners": ["B", "A (Thành)"],
+      "produced_by": [
+        "validation/invalid_points_corpus.py",
+        "validation/gen_invalid_curves.py",
+        "validation/strict_validator.py",
+        "validation/test_invalid_math.py"
+      ],
+      "consumed_by": [
+        "validation/test_crt_recovery.py",
+        "system-demos/ecdh-api/attack_client.py",
+        "docs/track_d_phase1.md",
+        "docs/track_d_phase2.md"
+      ],
+      "primary_key": ["point_id", "validator_version"],
+      "foreign_keys": [
+        { "field": "curve_id", "references": "D1.curve_id", "description": "Curve mục tiêu (curve_main hoặc curve_cof) mà điểm được gửi tới." },
+        { "field": "source_curve_id", "references": "D1.curve_id", "description": "Curve thực sự chứa điểm (E'), chỉ khác curve_id khi point_class=wrong_curve." }
+      ],
+      "row_schema": {
+        "type": "object",
+        "properties": {
+          "point_id": { "type": "string" },
+          "curve_id": { "type": "string" },
+          "source_curve_id": { "type": ["string", "null"] },
+          "point_class": { "$ref": "#/$defs/PointClass" },
+          "x": { "$ref": "#/$defs/NullableBigIntString" },
+          "y": { "$ref": "#/$defs/NullableBigIntString" },
+          "on_curve": { "type": ["boolean", "null"], "description": "Ground truth điểm có thoả y^2=x^3+ax+b trên curve_id không; null nếu point_class=infinity/out_of_range." },
+          "point_order": { "$ref": "#/$defs/NullableBigIntString", "description": "Bậc thật của điểm (ground truth), dùng tính bits_leaked = log2(point_order)." },
+          "subgroup_class": { "$ref": "#/$defs/SubgroupClass" },
+          "validator_version": { "$ref": "#/$defs/ValidatorVersion" },
+          "validator_result": { "$ref": "#/$defs/ValidatorResult" },
+          "expected_result": { "$ref": "#/$defs/ValidatorResult", "description": "Kết quả đúng theo thiết kế (bảng kỳ vọng D.4 trong experimental_design.md)." },
+          "match": { "type": "boolean", "description": "validator_result == expected_result." },
+          "protocol_result": {
+            "type": ["string", "null"],
+            "description": "Phản hồi giao thức khi validator_result=accept: 'shared_secret_hash:<hex>' hoặc mã lỗi khi reject."
+          },
+          "oracle_type": { "$ref": "#/$defs/OracleType" },
+          "run_id": { "type": "string" },
+          "seed": { "$ref": "#/$defs/NonNegativeInt" },
+          "timestamp": { "$ref": "#/$defs/Timestamp" },
+          "git_commit": { "$ref": "#/$defs/GitCommit" }
+        },
+        "required": [
+          "point_id", "curve_id", "point_class", "subgroup_class",
+          "validator_version", "validator_result", "expected_result",
+          "match", "oracle_type", "run_id", "seed", "timestamp", "git_commit"
+        ],
+        "additionalProperties": false
+      }
+    },
+
+    "D6": {
+      "file": "data/D6_timing.csv",
+      "description": "Bảng chỉ số tổng hợp dạng long-format (1 dòng = 1 phép đo) dùng chung cho cả 3 track: CPU cycles/wall-time bổ sung, thời gian khôi phục khoá (Track C), overhead RFC 6979 (Track C), số lượng oracle query & bits leaked (Track D). Dùng ref_dataset/ref_id để liên kết ngược về D1/D2/D3/D4 khi cần.",
+      "owners": ["C", "B"],
+      "produced_by": [
+        "signatures/test_nonce_attack.py",
+        "signatures/test_rfc6979.py",
+        "system-demos/jwt-es256/test_retest.py",
+        "system-demos/ecdh-api/attack_client.py",
+        "system-demos/ecdh-api/test_retest.py",
+        "scripts/measure_harness.py"
+      ],
+      "consumed_by": ["scripts/plot_all_charts.py", "docs/metrics_report.md", "docs/Final_Master_Report.md"],
+      "primary_key": ["metric_id"],
+      "foreign_keys": [
+        { "field": "ref_id", "references": "D1.curve_id | D2.record_id | D3.sig_id | D3.run_id | D4.point_id | D4.run_id (tuỳ ref_dataset)" }
+      ],
+      "row_schema": {
+        "type": "object",
+        "properties": {
+          "metric_id": { "type": "string" },
+          "track": { "$ref": "#/$defs/Track" },
+          "experiment": {
+            "type": "string",
+            "enum": [
+              "ecdlp_benchmark",
+              "nonce_recovery",
+              "rfc6979_overhead",
+              "jwt_demo_recovery",
+              "invalid_curve_query_count",
+              "ecdh_demo_recovery",
+              "negative_control"
+            ],
+            "description": "Nhóm thực nghiệm sinh ra chỉ số này."
+          },
+          "phase": { "$ref": "#/$defs/MetricPhase" },
+          "metric_name": { "$ref": "#/$defs/MetricName" },
+          "value": { "type": "number" },
+          "unit": {
+            "type": "string",
+            "enum": ["cycles", "ns", "ms", "count", "bits", "ratio", "bool_as_0_1"],
+            "description": "Đơn vị của 'value'; với metric_name có bản chất boolean (vd forged_token_accepted, response_class_uniform) dùng unit='bool_as_0_1' và value ∈ {0,1}."
+          },
+          "ref_dataset": { "$ref": "#/$defs/RefDataset" },
+          "ref_id": { "type": ["string", "null"], "description": "Id bản ghi tham chiếu trong ref_dataset (null nếu ref_dataset=none)." },
+          "subject_id": { "type": "string", "description": "Đối tượng được đo: curve_id, key_id, hoặc tên service (vd 'jwt-es256', 'ecdh-api')." },
+          "trial": { "$ref": "#/$defs/NullableNonNegativeInt" },
+          "seed": { "$ref": "#/$defs/NullableNonNegativeInt" },
+          "component_version": {
+            "type": ["string", "null"],
+            "description": "Phiên bản signer/validator/service tạo ra phép đo (vd 'vulnerable_constant', 'rfc6979', 'v2_oncurve_subgroup', 'patched_app')."
+          },
+          "host_id": { "type": "string" },
+          "git_commit": { "$ref": "#/$defs/GitCommit" },
+          "timestamp": { "$ref": "#/$defs/Timestamp" },
+          "notes": { "type": ["string", "null"] }
+        },
+        "required": [
+          "metric_id", "track", "experiment", "phase", "metric_name",
+          "value", "unit", "ref_dataset", "subject_id", "host_id",
+          "git_commit", "timestamp"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
