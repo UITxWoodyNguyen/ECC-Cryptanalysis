@@ -1,4 +1,4 @@
-from curves.ECC import *
+from curves.ecc import *
 from curves.bsgs import BSGS_ECC
 
 def SolveSubGroup(P: Point, Q: Point, p: int, e: int, n: int):

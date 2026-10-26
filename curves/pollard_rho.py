@@ -1,4 +1,4 @@
-from curves.ECC import *
+from curves.ecc import *
 from random import randint
 def Pollard_Rho_ECC(A: Point, G: Point, max_retries: int = 5) -> int:
     n = FindOrder(G)

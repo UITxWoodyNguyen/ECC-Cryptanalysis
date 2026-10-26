@@ -1,4 +1,4 @@
-from curves.ECC import *
+from curves.ecc import *
 from math import *
 def BSGS_ECC(A: Point, G: Point) -> int:
     n = FindOrder(G)
