@@ -1,6 +1,7 @@
-from curves.ECC import *
+from curves.ecc import *
+from math import gcd
 from random import randint
-def Pollard_Rho_ECC(A: Point, G: Point, max_retries: int = 5) -> int:
+def Pollard_Rho_ECC(A: Point, G: Point, max_retries: int = 10) -> int:
     n = FindOrder(G)
     def f(state):
         X, k, l = state
@@ -20,6 +21,23 @@ def Pollard_Rho_ECC(A: Point, G: Point, max_retries: int = 5) -> int:
         (X, k, l), (X_prime, k_prime, l_prime) = tortoise, hare
         delta_l = (l_prime - l) % n
         delta_k = (k - k_prime) % n
-        if GCD_binary(delta_l, n) == 1:
-            return (delta_k * pow(delta_l, -1, n)) % n
+        if delta_l == 0:
+            continue
+        # d*delta_l == delta_k (mod n); solve mod n/g, then recurse on the g part
+        g = gcd(delta_l, n)
+        m = n // g
+        d = (delta_k // g) * pow(delta_l // g, -1, m) % m
+        if g == 1:
+            return d
+        target = A - d * G
+        step = m * G
+        # shortcut: brute-force the remaining g <= 1024; recurse above that
+        if g <= 1024:
+            for t in range(g):
+                if target == t * step:
+                    return (d + m * t) % n
+            continue
+        t = Pollard_Rho_ECC(target, step, max_retries)
+        if t is not None:
+            return (d + m * t) % n
     return None
