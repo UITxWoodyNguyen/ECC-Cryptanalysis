@@ -10,11 +10,11 @@ Baby-Step Giant-Step (Shanks) cho ECDLP: cho G (bậc n) và Q = d*G, tìm d tro
     - Thời gian  : O(sqrt(n)) phép cộng điểm
     - Bộ nhớ     : O(sqrt(n)) điểm
 
-Số học đường cong dùng từ ECC.py (ECC, Point).
+Số học đường cong dùng từ curves/ecc.py (ECC, Point).
 """
 
 import math
-from ECC import ECC, Point
+from curves.ecc import ECC, Point, FindOrder
 
 
 def bsgs(curve: ECC, G: Point, Q: Point, n: int, m: int = None) -> dict:
@@ -55,3 +55,9 @@ def bsgs(curve: ECC, G: Point, Q: Point, n: int, m: int = None) -> dict:
 
     result["operations"] = ops
     return result
+
+
+def BSGS_ECC(A: Point, G: Point) -> int:
+    """Wrapper tương thích API cũ: trả về d sao cho A = d*G."""
+    n = FindOrder(G)
+    return bsgs(G.curve, G, A, n)["d"]

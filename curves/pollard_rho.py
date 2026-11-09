@@ -12,13 +12,13 @@ Pollard's Rho cho ECDLP (memoryless, Floyd): cho G (bậc n) và Q = d*G, tìm d
       va chạm "xấu" (b2 == b1, ...) thì khởi động lại với điểm xuất phát mới.
     - Thời gian: kỳ vọng O(sqrt(n)) phép cộng điểm; Bộ nhớ: O(1).
 
-Dùng từ ECC.py: ECC, Point, GCD_binary, inv_mod.
+Dùng từ curves/ecc.py: ECC, Point, GCD_binary, inv_mod, FindOrder.
 `operations` chỉ đếm phép cộng điểm của các walk.
 """
 
 import math
 import random
-from ECC import ECC, Point, GCD_binary, inv_mod
+from curves.ecc import ECC, Point, GCD_binary, inv_mod, FindOrder
 
 
 def _solve_collision(G: Point, Q: Point, n: int, a1: int, b1: int, a2: int, b2: int):
@@ -97,3 +97,9 @@ def pollard_rho(curve: ECC, G: Point, Q: Point, n: int, partitions: int = 20,
 
     result["operations"] = ops
     return result
+
+
+def Pollard_Rho_ECC(A: Point, G: Point, max_retries: int = 10) -> int:
+    """Wrapper tương thích API cũ: trả về d sao cho A = d*G."""
+    n = FindOrder(G)
+    return pollard_rho(G.curve, G, A, n, max_restarts=max_retries)["d"]
