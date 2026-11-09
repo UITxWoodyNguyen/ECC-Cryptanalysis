@@ -1,39 +1,99 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://topic14-ecc.local/schema/data_schema_v1.json",
+  "$id": "https://topic14-ecc.local/schema/data_schema_v1.1.json",
   "title": "Data Schema chuẩn — Topic 14: ECC Cryptanalysis (D1, D2, D3, D4, D6)",
-  "schema_version": "1.0.0",
-  "description": "Định nghĩa schema chuẩn cho 5 tập dữ liệu dùng chung giữa Track A (generic search), Track C (nonce reuse) và Track D (invalid-curve / small-subgroup). Tham chiếu: docs/threat_model.md, curves/math_notes.md, docs/experimental_design.md. Mỗi dataset được lưu dưới dạng CSV (1 dòng = 1 object khớp row_schema); file này là nguồn chân lý (source of truth) cho tên cột, kiểu dữ liệu và ràng buộc.",
+  "schema_version": "1.1.0",
+  "description": "Schema chuẩn cho 5 tập dữ liệu dùng chung giữa Track A (generic ECDLP search), Track C (nonce reuse) và Track D (invalid-curve / small-subgroup). Tham chiếu: docs/threat_model_draft.md, curves/math_notes.md, docs/experimental_design.md. Mỗi dataset lưu dưới dạng CSV (1 dòng = 1 object khớp row_schema). File này là nguồn chân lý (source of truth) cho tên cột, kiểu dữ liệu, ràng buộc trong từng dòng (row_schema, gồm cả ràng buộc chéo trường qua allOf) và các quy tắc kiểm tra liên bản ghi (validation_rules). Để kiểm tra: scripts/validate_datasets.py.",
+
+  "changelog": [
+    {
+      "version": "1.1.0",
+      "changes": [
+        "BigIntString không cho phép số 0 đứng đầu (^(0|[1-9][0-9]*)$); thêm PositiveBigIntString, SignedBigIntString, IdString, Sha256Hex, HexString có độ dài chẵn.",
+        "Thêm khối csv_spec (dấu phân cách, quoting, thứ tự cột, cách mã hoá null/boolean/nested) để mọi script đọc/ghi giống nhau.",
+        "D1: thêm p_bits, trace_t, n_is_prime, curve_name; ràng buộc chéo theo category (safe_prime_order => h=1, anomalous => is_anomalous, invalid_curve_component => bắt buộc source_for_point_class...).",
+        "D2: ràng buộc theo algorithm (bsgs cần m và memory_entries, rho cần restarts, PH cần factors); recovered/timeout nhất quán; thêm time_limit_s, implementation.",
+        "D3: thêm curve_id (FK D1 khi curve='toy'), pub_x, pub_y, hash_alg, ground_truth_k (chỉ cho synthetic_corpus); ràng buộc signer_version <-> nonce_class; repeated_r <-> repeated_r_group_id; source=jwt_system_demo <-> jti.",
+        "D4: ràng buộc theo point_class (infinity, wrong_curve, small_subgroup, on_curve_not_in_G, twist_point, valid); định dạng protocol_result theo validator_result; thêm kdf_hash_alg không bắt buộc không dùng — xem ghi chú.",
+        "D6: ràng buộc metric_name <-> unit, track <-> experiment, ref_dataset <-> ref_id, giá trị boolean ∈ {0,1}, value >= 0.",
+        "Thêm validation_rules (kiểm tra liên bản ghi: PK/FK, tích thừa số = n, giới hạn Hasse, match == (result == expected), ...) và expected_result_matrix cho D4."
+      ]
+    },
+    { "version": "1.0.0", "changes": ["Bản đầu tiên (D1, D2, D3, D4, D6)."] }
+  ],
 
   "conventions": {
-    "encoding": "UTF-8, không BOM",
-    "big_integers": "Mọi số lớn (p, a, b, #E, n, h, d, r, s, x, y, ...) lưu dưới dạng chuỗi thập phân (decimal string), KHÔNG dùng kiểu number của JSON/CSV để tránh mất độ chính xác với số 256-bit.",
-    "hex_strings": "msg_hash, một số id dẫn xuất lưu dạng hex thường (lowercase), không có tiền tố '0x'.",
-    "null_and_na": "Giá trị không áp dụng (NA) hoặc chưa đo được biểu diễn bằng JSON null; khi xuất ra CSV, ô tương ứng để trống.",
-    "booleans": "true/false (chữ thường).",
+    "encoding": "UTF-8, không BOM, kết thúc dòng LF.",
+    "big_integers": "Mọi số lớn (p, a, b, #E, n, h, d, r, s, x, y, ...) lưu dạng chuỗi thập phân (decimal string), KHÔNG dùng kiểu number của JSON/CSV để tránh mất độ chính xác với số 256-bit. Không có số 0 đứng đầu (trừ chính số '0').",
+    "hex_strings": "msg_hash và các giá trị dẫn xuất dạng hex: chữ thường, không có tiền tố '0x', số ký tự chẵn.",
+    "null_and_na": "Giá trị không áp dụng (NA) hoặc chưa đo được biểu diễn bằng JSON null; khi xuất ra CSV, ô tương ứng để trống. Với cột kiểu chuỗi, ô trống LUÔN được hiểu là null (không có chuỗi rỗng hợp lệ).",
+    "booleans": "true/false (chữ thường) trong CSV và JSON.",
     "timestamps": "ISO-8601 UTC, định dạng 'YYYY-MM-DDThh:mm:ssZ'.",
-    "git_commit": "Hash commit (ngắn ≥7 hex hoặc đầy đủ 40 hex) của code sinh ra bản ghi — bắt buộc với mọi dataset để tái lập.",
-    "nested_values_in_csv": "Trường kiểu object/array (vd order_factorization) khi lưu trong file .csv được serialize thành chuỗi JSON trong 1 ô; khi đọc bằng pandas cần json.loads lại.",
-    "id_format": "Các *_id là chuỗi duy nhất trong phạm vi dataset, khuyến nghị dạng '<prefix>-<8 hex ngẫu nhiên hoặc tăng dần>' (vd 'crv-00000001', 'sig-0000001a')."
+    "git_commit": "Hash commit (ngắn ≥7 hex hoặc đầy đủ 40 hex, chữ thường) của code sinh ra bản ghi — bắt buộc với mọi dataset để tái lập.",
+    "nested_values_in_csv": "Trường kiểu object/array (vd E_count_factorization, algo_params) khi lưu trong CSV được serialize thành chuỗi JSON compact trong 1 ô (separators=(',',':'), ensure_ascii=false); khi đọc phải json.loads lại. Ô trống = null.",
+    "id_format": "Các *_id là chuỗi duy nhất trong phạm vi dataset, khuyến nghị '<prefix>-<8 hex hoặc số tăng dần>' (vd 'crv-00000001', 'sig-0000001a', 'rec-00000001', 'pt-0000001', 'met-0000001'). Chỉ dùng ký tự [A-Za-z0-9_.:-].",
+    "units_and_time": "wall_time_ns là nanosecond (số nguyên); thời gian mức ứng dụng dùng ms. Không trộn đơn vị trong cùng metric_name.",
+    "randomness": "Mọi bản ghi sinh ngẫu nhiên phải có seed để tái lập (random.Random(seed)); không dùng seed hệ thống ngầm.",
+    "security_note": "Toàn bộ dữ liệu là dữ liệu lab (toy curve, khoá lab). Không lưu khoá bí mật thật; ground_truth_k/d_true chỉ hợp lệ cho dữ liệu tổng hợp để tự kiểm."
+  },
+
+  "csv_spec": {
+    "delimiter": ",",
+    "quote_char": "\"",
+    "quoting": "minimal (chỉ quote khi ô chứa dấu phẩy, dấu nháy kép hoặc xuống dòng; nháy kép trong ô được nhân đôi theo RFC 4180)",
+    "header": "Dòng đầu là tên cột, đúng bằng key trong row_schema.properties.",
+    "column_order": "Thứ tự cột = thứ tự khai báo trong row_schema.properties của từng dataset.",
+    "extra_columns": "Không cho phép cột lạ (additionalProperties=false). Muốn thêm cột phải nâng schema_version.",
+    "type_coercion": {
+      "string": "giữ nguyên chuỗi; ô trống => null",
+      "integer": "int(); ô trống => null (nếu cột nullable)",
+      "number": "float(); ô trống => null",
+      "boolean": "'true'/'false' => bool",
+      "array_or_object": "json.loads(); ô trống => null"
+    },
+    "sorting": "Khuyến nghị ghi theo khoá chính tăng dần để diff/git ổn định."
   },
 
   "$defs": {
     "BigIntString": {
       "type": "string",
-      "pattern": "^[0-9]+$",
-      "description": "Số nguyên không âm lớn, lưu dạng chuỗi thập phân."
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "description": "Số nguyên không âm lớn, dạng chuỗi thập phân, không có số 0 đứng đầu."
     },
     "NullableBigIntString": {
       "type": ["string", "null"],
-      "pattern": "^[0-9]+$"
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "PositiveBigIntString": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "description": "Số nguyên dương lớn (>=1), dạng chuỗi thập phân."
+    },
+    "NullablePositiveBigIntString": {
+      "type": ["string", "null"],
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "SignedBigIntString": {
+      "type": "string",
+      "pattern": "^(0|-?[1-9][0-9]*)$",
+      "description": "Số nguyên có dấu lớn (vd trace of Frobenius t)."
+    },
+    "IdString": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}$"
+    },
+    "NullableIdString": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}$"
     },
     "HexString": {
       "type": "string",
-      "pattern": "^[0-9a-f]+$"
+      "pattern": "^([0-9a-f]{2})+$",
+      "description": "Hex chữ thường, độ dài chẵn, không tiền tố 0x."
     },
-    "NullableHexString": {
-      "type": ["string", "null"],
-      "pattern": "^[0-9a-f]+$"
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
     },
     "GitCommit": {
       "type": "string",
@@ -41,6 +101,7 @@
     },
     "Timestamp": {
       "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
       "format": "date-time"
     },
     "NonNegativeInt": {
@@ -54,11 +115,17 @@
     "FactorizationEntry": {
       "type": "object",
       "properties": {
-        "prime": { "$ref": "#/$defs/BigIntString" },
+        "prime": { "$ref": "#/$defs/PositiveBigIntString" },
         "exponent": { "type": "integer", "minimum": 1 }
       },
       "required": ["prime", "exponent"],
       "additionalProperties": false
+    },
+    "Factorization": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/FactorizationEntry" },
+      "description": "Phân tích thừa số nguyên tố, sắp xếp theo prime tăng dần, không lặp prime."
     },
     "CurveCategory": {
       "type": "string",
@@ -71,7 +138,7 @@
         "invalid_curve_component",
         "standard_named"
       ],
-      "description": "safe_prime_order: h=1, n nguyên tố, dùng cho Track A/negative control. smooth_order: n có thừa số nhỏ, dùng cho Pohlig-Hellman. cofactor_gt1: h>1, dùng minh hoạ small-subgroup. anomalous/supersingular: trường hợp đặc biệt (lý thuyết/Track B mở rộng). invalid_curve_component: curve E' dùng để sinh điểm tấn công invalid-curve (Track D). standard_named: P-256/secp256k1/X25519/Ed25519 — chỉ metadata, không chạy tấn công thật (negative control)."
+      "description": "safe_prime_order: h=1, n nguyên tố, dùng cho Track A/negative control. smooth_order: n có thừa số nhỏ, dùng cho Pohlig–Hellman. cofactor_gt1: h>1, minh hoạ small-subgroup. anomalous/supersingular: trường hợp đặc biệt (lý thuyết/Track B mở rộng). invalid_curve_component: curve E' dùng để sinh điểm tấn công invalid-curve (Track D). standard_named: P-256/secp256k1/X25519/Ed25519 — chỉ metadata, không chạy tấn công thật (negative control)."
     },
     "Algorithm": {
       "type": "string",
@@ -79,14 +146,7 @@
     },
     "NonceClass": {
       "type": "string",
-      "enum": [
-        "reuse_constant",
-        "reuse_restart",
-        "reuse_sparse",
-        "low_entropy",
-        "random_ok",
-        "deterministic"
-      ],
+      "enum": ["reuse_constant", "reuse_restart", "reuse_sparse", "low_entropy", "random_ok", "deterministic"],
       "description": "Khớp 4 failure mode (F1–F4) + control ngẫu nhiên (random_ok) + bản vá RFC 6979 (deterministic) trong docs/experimental_design.md Track C."
     },
     "SignerVersion": {
@@ -106,15 +166,7 @@
     },
     "PointClass": {
       "type": "string",
-      "enum": [
-        "valid",
-        "infinity",
-        "out_of_range",
-        "wrong_curve",
-        "small_subgroup",
-        "on_curve_not_in_G",
-        "twist_point"
-      ],
+      "enum": ["valid", "infinity", "out_of_range", "wrong_curve", "small_subgroup", "on_curve_not_in_G", "twist_point"],
       "description": "6+1 lớp điểm kiểm thử theo docs/experimental_design.md D.4."
     },
     "SubgroupClass": {
@@ -188,29 +240,25 @@
       "row_schema": {
         "type": "object",
         "properties": {
-          "curve_id": { "type": "string", "description": "Khoá chính, duy nhất trong D1." },
-          "p": { "$ref": "#/$defs/BigIntString", "description": "Số nguyên tố của trường F_p." },
-          "a": { "$ref": "#/$defs/BigIntString", "description": "Hệ số a của E: y^2 = x^3 + ax + b." },
-          "b": { "$ref": "#/$defs/BigIntString", "description": "Hệ số b." },
+          "curve_id": { "$ref": "#/$defs/IdString", "description": "Khoá chính, duy nhất trong D1." },
+          "curve_name": { "type": ["string", "null"], "description": "Tên chuẩn (vd 'P-256', 'secp256k1', 'X25519'); bắt buộc khi category=standard_named, ngược lại null." },
+          "p": { "$ref": "#/$defs/PositiveBigIntString", "description": "Số nguyên tố của trường F_p." },
+          "p_bits": { "type": "integer", "minimum": 2, "description": "Số bit của p (= p.bit_length())." },
+          "a": { "$ref": "#/$defs/BigIntString", "description": "Hệ số a của E: y^2 = x^3 + ax + b (mod p), 0 <= a < p." },
+          "b": { "$ref": "#/$defs/BigIntString", "description": "Hệ số b, 0 <= b < p." },
           "discriminant": { "$ref": "#/$defs/BigIntString", "description": "(4a^3 + 27b^2) mod p." },
-          "discriminant_ok": { "type": "boolean", "description": "true nếu discriminant != 0 (curve không singular)." },
-          "E_count": { "$ref": "#/$defs/BigIntString", "description": "#E(F_p), tổng số điểm kể cả điểm vô cực." },
-          "E_count_factorization": {
-            "type": "array",
-            "items": { "$ref": "#/$defs/FactorizationEntry" },
-            "description": "Phân tích thừa số nguyên tố của #E."
-          },
+          "discriminant_ok": { "type": "boolean", "const": true, "description": "Phải = true (discriminant != 0, curve không singular). Curve singular bị loại ngay khi sinh, không ghi vào D1." },
+          "E_count": { "$ref": "#/$defs/PositiveBigIntString", "description": "#E(F_p), tổng số điểm kể cả điểm vô cực." },
+          "trace_t": { "$ref": "#/$defs/SignedBigIntString", "description": "Trace Frobenius t = p + 1 - #E." },
+          "E_count_factorization": { "$ref": "#/$defs/Factorization", "description": "Phân tích thừa số nguyên tố của #E." },
           "base_point_x": { "$ref": "#/$defs/BigIntString" },
           "base_point_y": { "$ref": "#/$defs/BigIntString" },
-          "subgroup_n": { "$ref": "#/$defs/BigIntString", "description": "Bậc n = ord(G)." },
-          "n_bits": { "$ref": "#/$defs/NonNegativeInt", "description": "Số bit xấp xỉ của n (dùng để nhóm thí nghiệm Track A)." },
-          "n_factorization": {
-            "type": "array",
-            "items": { "$ref": "#/$defs/FactorizationEntry" },
-            "description": "Phân tích thừa số nguyên tố của n — dùng cho Pohlig–Hellman."
-          },
-          "cofactor_h": { "$ref": "#/$defs/BigIntString", "description": "h = #E / n." },
-          "largest_prime_factor_n": { "$ref": "#/$defs/BigIntString", "description": "q_max — ước nguyên tố lớn nhất của n, quyết định W_eff của Pohlig–Hellman." },
+          "subgroup_n": { "$ref": "#/$defs/PositiveBigIntString", "description": "Bậc n = ord(G)." },
+          "n_bits": { "type": "integer", "minimum": 2, "description": "Số bit của n (= n.bit_length()); dùng để nhóm thí nghiệm Track A." },
+          "n_is_prime": { "type": "boolean", "description": "true nếu n nguyên tố." },
+          "n_factorization": { "$ref": "#/$defs/Factorization", "description": "Phân tích thừa số nguyên tố của n — dùng cho Pohlig–Hellman." },
+          "cofactor_h": { "$ref": "#/$defs/PositiveBigIntString", "description": "h = #E / n." },
+          "largest_prime_factor_n": { "$ref": "#/$defs/PositiveBigIntString", "description": "q_max — ước nguyên tố lớn nhất của n, quyết định chi phí hiệu dụng của Pohlig–Hellman." },
           "is_anomalous": { "type": "boolean", "description": "true nếu #E == p." },
           "is_supersingular": { "type": "boolean" },
           "category": { "$ref": "#/$defs/CurveCategory" },
@@ -220,30 +268,75 @@
             "description": "Chỉ đặt khi category=invalid_curve_component: curve này được tạo ra để cấp điểm cho lớp point_class nào trong D4."
           },
           "small_order_available": {
-            "type": "array",
-            "items": { "$ref": "#/$defs/BigIntString" },
-            "description": "Danh sách các bậc nhỏ r_i mà curve này có thể cấp điểm (dùng khi category=invalid_curve_component)."
+            "type": ["array", "null"],
+            "items": { "$ref": "#/$defs/PositiveBigIntString" },
+            "description": "Danh sách các bậc nhỏ r_i mà curve này có thể cấp điểm (bắt buộc, không rỗng, khi category=invalid_curve_component; ngược lại null)."
           },
-          "generation_method": { "type": "string", "description": "Tên script/hàm sinh curve, vd 'gen_smooth_curves.v1'." },
+          "generation_method": { "type": "string", "minLength": 1, "description": "Tên script/hàm sinh curve kèm version, vd 'gen_smooth_curves.v1'." },
           "seed": { "$ref": "#/$defs/NonNegativeInt" },
           "notes": { "type": ["string", "null"] },
           "git_commit": { "$ref": "#/$defs/GitCommit" },
           "created_at": { "$ref": "#/$defs/Timestamp" }
         },
         "required": [
-          "curve_id", "p", "a", "b", "discriminant", "discriminant_ok",
+          "curve_id", "p", "p_bits", "a", "b", "discriminant", "discriminant_ok",
           "E_count", "E_count_factorization", "base_point_x", "base_point_y",
-          "subgroup_n", "n_bits", "n_factorization", "cofactor_h",
+          "subgroup_n", "n_bits", "n_is_prime", "n_factorization", "cofactor_h",
           "largest_prime_factor_n", "is_anomalous", "is_supersingular",
           "category", "generation_method", "seed", "git_commit", "created_at"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "category": { "const": "invalid_curve_component" } }, "required": ["category"] },
+            "then": {
+              "properties": {
+                "source_for_point_class": { "type": "string" },
+                "small_order_available": { "type": "array", "minItems": 1 }
+              },
+              "required": ["source_for_point_class", "small_order_available"]
+            },
+            "else": {
+              "properties": {
+                "source_for_point_class": { "type": "null" },
+                "small_order_available": { "type": "null" }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "category": { "const": "safe_prime_order" } }, "required": ["category"] },
+            "then": { "properties": { "cofactor_h": { "const": "1" }, "n_is_prime": { "const": true } } }
+          },
+          {
+            "if": { "properties": { "category": { "const": "smooth_order" } }, "required": ["category"] },
+            "then": { "properties": { "n_is_prime": { "const": false } } }
+          },
+          {
+            "if": { "properties": { "category": { "const": "cofactor_gt1" } }, "required": ["category"] },
+            "then": { "properties": { "cofactor_h": { "pattern": "^([2-9]|[1-9][0-9]+)$" } } }
+          },
+          {
+            "if": { "properties": { "category": { "const": "anomalous" } }, "required": ["category"] },
+            "then": { "properties": { "is_anomalous": { "const": true } } }
+          },
+          {
+            "if": { "properties": { "category": { "const": "supersingular" } }, "required": ["category"] },
+            "then": { "properties": { "is_supersingular": { "const": true } } }
+          },
+          {
+            "if": { "properties": { "category": { "const": "standard_named" } }, "required": ["category"] },
+            "then": { "properties": { "curve_name": { "type": "string", "minLength": 1 } }, "required": ["curve_name"] },
+            "else": {
+              "properties": { "curve_name": { "type": "null" }, "n_bits": { "maximum": 64 } }
+            }
+          }
+        ]
       }
     },
 
     "D2": {
       "file": "data/D2_ecdlp_benchmarks.csv",
-      "description": "Kết quả benchmark các thuật toán ECDLP (exhaustive, BSGS, Pollard-rho, Pohlig–Hellman) trên các curve trong D1 — Track A.",
+      "description": "Kết quả benchmark các thuật toán ECDLP (exhaustive, BSGS, Pollard-rho, Pohlig–Hellman) trên các curve trong D1 — Track A. 1 dòng = 1 trial của 1 thuật toán trên 1 curve.",
       "owners": ["C", "A (Thành)"],
       "produced_by": [
         "scripts/run_ecdlp_baselines.py",
@@ -251,34 +344,37 @@
       ],
       "consumed_by": ["docs/charts/ecdlp_bsgs.png", "scripts/plot_all_charts.py", "docs/track_a_report.md"],
       "primary_key": ["record_id"],
+      "unique_together": [["curve_id", "algorithm", "trial"]],
       "foreign_keys": [
         { "field": "curve_id", "references": "D1.curve_id" }
       ],
       "row_schema": {
         "type": "object",
         "properties": {
-          "record_id": { "type": "string" },
-          "curve_id": { "type": "string" },
+          "record_id": { "$ref": "#/$defs/IdString" },
+          "curve_id": { "$ref": "#/$defs/IdString" },
           "algorithm": { "$ref": "#/$defs/Algorithm" },
-          "n_bits": { "$ref": "#/$defs/NonNegativeInt" },
+          "n_bits": { "type": "integer", "minimum": 2, "maximum": 64, "description": "Phải bằng D1.n_bits của curve_id." },
           "trial": { "$ref": "#/$defs/NonNegativeInt" },
           "seed": { "$ref": "#/$defs/NonNegativeInt" },
-          "d_true": { "$ref": "#/$defs/BigIntString", "description": "Scalar bí mật dùng cho trial (toy, chỉ để tái lập/tự kiểm)." },
-          "d_recovered": { "$ref": "#/$defs/NullableBigIntString" },
-          "recovered": { "type": "boolean" },
+          "d_true": { "$ref": "#/$defs/PositiveBigIntString", "description": "Scalar bí mật dùng cho trial, 1 <= d_true < n (toy, chỉ để tái lập/tự kiểm)." },
+          "d_recovered": { "$ref": "#/$defs/NullablePositiveBigIntString" },
+          "recovered": { "type": "boolean", "description": "true nếu d_recovered * G == Q (kiểm lại bằng phép nhân, không chỉ so với d_true)." },
           "operations": { "$ref": "#/$defs/NonNegativeInt", "description": "Tổng số phép add+double của thuật toán." },
           "restarts": { "$ref": "#/$defs/NullableNonNegativeInt", "description": "Số lần Pollard-rho phải khởi động lại (null nếu không áp dụng)." },
           "cpu_cycles": { "$ref": "#/$defs/NullableNonNegativeInt", "description": "null nếu chạy bằng bản Python không đo được cycles." },
           "wall_time_ns": { "$ref": "#/$defs/NonNegativeInt" },
+          "time_limit_s": { "type": ["number", "null"], "exclusiveMinimum": 0, "description": "Giới hạn thời gian của trial (giây); null nếu không đặt." },
           "memory_peak_kib": { "type": "number", "minimum": 0 },
-          "memory_entries": { "$ref": "#/$defs/NullableNonNegativeInt", "description": "Kích thước bảng băm (BSGS); null với exhaustive/rho." },
+          "memory_entries": { "$ref": "#/$defs/NullableNonNegativeInt", "description": "Kích thước bảng băm (BSGS) / số distinguished points (rho nếu lưu); null với exhaustive." },
           "timeout": { "type": "boolean" },
+          "implementation": { "type": ["string", "null"], "description": "Ngôn ngữ/thư viện cài đặt, vd 'python3.12', 'c++17'." },
           "algo_params": {
             "type": "object",
-            "description": "Tham số riêng của thuật toán (vd {\"m\": 4096} cho BSGS, {\"dp_bits\": 6, \"num_walks\": 20} cho rho, {\"factors\": [...]}, cho PH).",
+            "description": "Tham số riêng của thuật toán (vd {\"m\": 4096} cho BSGS, {\"dp_bits\": 6, \"num_walks\": 20} cho rho, {\"factors\": [...]} cho PH).",
             "additionalProperties": true
           },
-          "host_id": { "type": "string" },
+          "host_id": { "$ref": "#/$defs/IdString" },
           "git_commit": { "$ref": "#/$defs/GitCommit" },
           "created_at": { "$ref": "#/$defs/Timestamp" }
         },
@@ -288,7 +384,58 @@
           "memory_peak_kib", "timeout", "algo_params", "host_id",
           "git_commit", "created_at"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "recovered": { "const": true } }, "required": ["recovered"] },
+            "then": { "properties": { "d_recovered": { "type": "string" }, "timeout": { "const": false } }, "required": ["d_recovered"] }
+          },
+          {
+            "if": { "properties": { "timeout": { "const": true } }, "required": ["timeout"] },
+            "then": { "properties": { "recovered": { "const": false } } }
+          },
+          {
+            "if": { "properties": { "algorithm": { "const": "exhaustive" } }, "required": ["algorithm"] },
+            "then": { "properties": { "memory_entries": { "type": "null" }, "restarts": { "type": "null" } } }
+          },
+          {
+            "if": { "properties": { "algorithm": { "const": "bsgs" } }, "required": ["algorithm"] },
+            "then": {
+              "properties": {
+                "memory_entries": { "type": "integer" },
+                "restarts": { "type": "null" },
+                "algo_params": { "type": "object", "properties": { "m": { "type": "integer", "minimum": 1 } }, "required": ["m"] }
+              },
+              "required": ["memory_entries"]
+            }
+          },
+          {
+            "if": { "properties": { "algorithm": { "const": "pollard_rho" } }, "required": ["algorithm"] },
+            "then": {
+              "properties": {
+                "restarts": { "type": "integer" },
+                "algo_params": { "type": "object", "properties": { "num_walks": { "type": "integer", "minimum": 1 } } }
+              },
+              "required": ["restarts"]
+            }
+          },
+          {
+            "if": { "properties": { "algorithm": { "const": "pohlig_hellman" } }, "required": ["algorithm"] },
+            "then": {
+              "properties": {
+                "restarts": { "type": "null" },
+                "algo_params": {
+                  "type": "object",
+                  "properties": {
+                    "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/FactorizationEntry" } },
+                    "subalgorithm": { "$ref": "#/$defs/Algorithm" }
+                  },
+                  "required": ["factors"]
+                }
+              }
+            }
+          }
+        ]
       }
     },
 
@@ -309,22 +456,30 @@
         "docs/track_c_phase2.md"
       ],
       "primary_key": ["sig_id"],
-      "foreign_keys": [],
+      "unique_together": [["run_id", "sig_index"]],
+      "foreign_keys": [
+        { "field": "curve_id", "references": "D1.curve_id", "description": "Chỉ dùng khi curve='toy'; null với P-256/secp256k1." }
+      ],
       "row_schema": {
         "type": "object",
         "properties": {
-          "sig_id": { "type": "string" },
-          "run_id": { "type": "string", "description": "Nhóm các chữ ký cùng một lần chạy thí nghiệm (cùng mode, N, rho)." },
-          "key_id": { "type": "string", "description": "Khoá lab dùng để ký (định danh, KHÔNG chứa giá trị khoá thật)." },
+          "sig_id": { "$ref": "#/$defs/IdString" },
+          "run_id": { "$ref": "#/$defs/IdString", "description": "Nhóm các chữ ký cùng một lần chạy thí nghiệm (cùng mode, N, rho)." },
+          "key_id": { "$ref": "#/$defs/IdString", "description": "Khoá lab dùng để ký (định danh, KHÔNG chứa giá trị khoá thật)." },
           "curve": { "type": "string", "enum": ["P-256", "secp256k1", "toy"], "description": "Curve dùng cho chữ ký (ES256 dùng P-256)." },
+          "curve_id": { "$ref": "#/$defs/NullableIdString", "description": "FK tới D1.curve_id; bắt buộc khi curve='toy', null khi P-256/secp256k1." },
+          "pub_x": { "$ref": "#/$defs/NullableBigIntString", "description": "Toạ độ x khoá công khai (để verify chữ ký và kiểm tra khoá khôi phục)." },
+          "pub_y": { "$ref": "#/$defs/NullableBigIntString", "description": "Toạ độ y khoá công khai." },
           "signer_version": { "$ref": "#/$defs/SignerVersion" },
           "nonce_class": { "$ref": "#/$defs/NonceClass" },
+          "hash_alg": { "type": "string", "enum": ["sha256", "sha384", "sha512"], "default": "sha256" },
           "msg_hash": { "$ref": "#/$defs/HexString", "description": "H(m), hex thường." },
-          "r": { "$ref": "#/$defs/BigIntString" },
-          "s": { "$ref": "#/$defs/BigIntString" },
+          "r": { "$ref": "#/$defs/PositiveBigIntString" },
+          "s": { "$ref": "#/$defs/PositiveBigIntString" },
           "sig_index": { "$ref": "#/$defs/NonNegativeInt", "description": "Thứ tự chữ ký trong run_id (dùng tính sigs_to_first_repeat)." },
           "repeated_r": { "type": "boolean", "description": "Ground truth: chữ ký này có r trùng với ít nhất 1 chữ ký khác cùng key_id." },
-          "repeated_r_group_id": { "type": ["string", "null"], "description": "Id nhóm các chữ ký cùng trùng r (null nếu repeated_r=false)." },
+          "repeated_r_group_id": { "$ref": "#/$defs/NullableIdString", "description": "Id nhóm các chữ ký cùng trùng r (null nếu repeated_r=false)." },
+          "ground_truth_k": { "$ref": "#/$defs/NullablePositiveBigIntString", "description": "Nonce thật dùng khi ký — CHỈ có với source=synthetic_corpus, dùng để đánh giá attacker; phải null với jwt_system_demo." },
           "leaked_bits_class": { "type": ["string", "null"], "description": "Dự phòng cho Track E (bias/HNP) — để null ở Track C." },
           "jti": { "type": ["string", "null"], "description": "JWT ID khi chữ ký sinh ra từ system-demos/jwt-es256." },
           "source": { "$ref": "#/$defs/SignatureSource" },
@@ -337,13 +492,64 @@
           "nonce_class", "msg_hash", "r", "s", "sig_index", "repeated_r",
           "source", "seed", "timestamp", "git_commit"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "repeated_r": { "const": true } }, "required": ["repeated_r"] },
+            "then": { "properties": { "repeated_r_group_id": { "type": "string" } }, "required": ["repeated_r_group_id"] },
+            "else": { "properties": { "repeated_r_group_id": { "type": "null" } } }
+          },
+          {
+            "if": { "properties": { "curve": { "const": "toy" } }, "required": ["curve"] },
+            "then": { "properties": { "curve_id": { "type": "string" } }, "required": ["curve_id"] },
+            "else": {
+              "properties": { "curve_id": { "type": "null" }, "msg_hash": { "$ref": "#/$defs/Sha256Hex" } }
+            }
+          },
+          {
+            "if": { "properties": { "source": { "const": "jwt_system_demo" } }, "required": ["source"] },
+            "then": {
+              "properties": {
+                "jti": { "type": "string" },
+                "ground_truth_k": { "type": "null" },
+                "curve": { "const": "P-256" },
+                "hash_alg": { "const": "sha256" }
+              },
+              "required": ["jti"]
+            },
+            "else": { "properties": { "jti": { "type": "null" } } }
+          },
+          {
+            "if": { "properties": { "signer_version": { "const": "vulnerable_constant" } }, "required": ["signer_version"] },
+            "then": { "properties": { "nonce_class": { "const": "reuse_constant" } } }
+          },
+          {
+            "if": { "properties": { "signer_version": { "const": "vulnerable_restart_seed" } }, "required": ["signer_version"] },
+            "then": { "properties": { "nonce_class": { "const": "reuse_restart" } } }
+          },
+          {
+            "if": { "properties": { "signer_version": { "const": "vulnerable_sparse_reuse" } }, "required": ["signer_version"] },
+            "then": { "properties": { "nonce_class": { "const": "reuse_sparse" } } }
+          },
+          {
+            "if": { "properties": { "signer_version": { "const": "vulnerable_low_entropy" } }, "required": ["signer_version"] },
+            "then": { "properties": { "nonce_class": { "const": "low_entropy" } } }
+          },
+          {
+            "if": { "properties": { "signer_version": { "const": "random_ok" } }, "required": ["signer_version"] },
+            "then": { "properties": { "nonce_class": { "const": "random_ok" } } }
+          },
+          {
+            "if": { "properties": { "signer_version": { "const": "rfc6979" } }, "required": ["signer_version"] },
+            "then": { "properties": { "nonce_class": { "const": "deterministic" }, "repeated_r": { "const": false } } }
+          }
+        ]
       }
     },
 
     "D4": {
       "file": "data/D4_validation.csv",
-      "description": "Corpus điểm kiểm thử validation (point_class) × kết quả từng phiên bản validator — Track D. Mỗi điểm được test lặp lại qua nhiều validator_version (long format: 1 điểm × 1 validator = 1 dòng).",
+      "description": "Corpus điểm kiểm thử validation (point_class) × kết quả từng phiên bản validator — Track D. Long format: 1 điểm × 1 validator_version = 1 dòng.",
       "owners": ["B", "A (Thành)"],
       "produced_by": [
         "validation/invalid_points_corpus.py",
@@ -360,30 +566,30 @@
       "primary_key": ["point_id", "validator_version"],
       "foreign_keys": [
         { "field": "curve_id", "references": "D1.curve_id", "description": "Curve mục tiêu (curve_main hoặc curve_cof) mà điểm được gửi tới." },
-        { "field": "source_curve_id", "references": "D1.curve_id", "description": "Curve thực sự chứa điểm (E'), chỉ khác curve_id khi point_class=wrong_curve." }
+        { "field": "source_curve_id", "references": "D1.curve_id", "description": "Curve thực sự chứa điểm (E'), bắt buộc khi point_class ∈ {wrong_curve, small_subgroup nếu lấy từ E', twist_point}." }
       ],
       "row_schema": {
         "type": "object",
         "properties": {
-          "point_id": { "type": "string" },
-          "curve_id": { "type": "string" },
-          "source_curve_id": { "type": ["string", "null"] },
+          "point_id": { "$ref": "#/$defs/IdString" },
+          "curve_id": { "$ref": "#/$defs/IdString" },
+          "source_curve_id": { "$ref": "#/$defs/NullableIdString" },
           "point_class": { "$ref": "#/$defs/PointClass" },
           "x": { "$ref": "#/$defs/NullableBigIntString" },
           "y": { "$ref": "#/$defs/NullableBigIntString" },
-          "on_curve": { "type": ["boolean", "null"], "description": "Ground truth điểm có thoả y^2=x^3+ax+b trên curve_id không; null nếu point_class=infinity/out_of_range." },
-          "point_order": { "$ref": "#/$defs/NullableBigIntString", "description": "Bậc thật của điểm (ground truth), dùng tính bits_leaked = log2(point_order)." },
+          "on_curve": { "type": ["boolean", "null"], "description": "Ground truth điểm có thoả y^2=x^3+ax+b (mod p) trên curve_id không; null nếu point_class=infinity/out_of_range." },
+          "point_order": { "$ref": "#/$defs/NullablePositiveBigIntString", "description": "Bậc thật của điểm (ground truth), dùng tính bits_leaked = log2(point_order). null nếu không xác định (vd infinity, out_of_range)." },
           "subgroup_class": { "$ref": "#/$defs/SubgroupClass" },
           "validator_version": { "$ref": "#/$defs/ValidatorVersion" },
           "validator_result": { "$ref": "#/$defs/ValidatorResult" },
-          "expected_result": { "$ref": "#/$defs/ValidatorResult", "description": "Kết quả đúng theo thiết kế (bảng kỳ vọng D.4 trong experimental_design.md)." },
+          "expected_result": { "$ref": "#/$defs/ValidatorResult", "description": "Kết quả đúng theo thiết kế (xem expected_result_matrix, nguồn: bảng D.4 trong experimental_design.md)." },
           "match": { "type": "boolean", "description": "validator_result == expected_result." },
           "protocol_result": {
             "type": ["string", "null"],
-            "description": "Phản hồi giao thức khi validator_result=accept: 'shared_secret_hash:<hex>' hoặc mã lỗi khi reject."
+            "description": "Phản hồi giao thức: 'shared_secret_hash:<hex>' khi accept; 'error:<mã_lỗi_snake_case>' khi reject; null nếu oracle_type=na."
           },
           "oracle_type": { "$ref": "#/$defs/OracleType" },
-          "run_id": { "type": "string" },
+          "run_id": { "$ref": "#/$defs/IdString" },
           "seed": { "$ref": "#/$defs/NonNegativeInt" },
           "timestamp": { "$ref": "#/$defs/Timestamp" },
           "git_commit": { "$ref": "#/$defs/GitCommit" }
@@ -393,7 +599,74 @@
           "validator_version", "validator_result", "expected_result",
           "match", "oracle_type", "run_id", "seed", "timestamp", "git_commit"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "validator_result": { "const": "accept" } }, "required": ["validator_result"] },
+            "then": { "properties": { "protocol_result": { "type": ["string", "null"], "pattern": "^shared_secret_hash:[0-9a-f]+$" } } },
+            "else": { "properties": { "protocol_result": { "type": ["string", "null"], "pattern": "^error:[a-z0-9_]+$" } } }
+          },
+          {
+            "if": { "properties": { "point_class": { "const": "valid" } }, "required": ["point_class"] },
+            "then": {
+              "properties": {
+                "on_curve": { "const": true },
+                "subgroup_class": { "const": "in_subgroup" },
+                "expected_result": { "const": "accept" },
+                "x": { "type": "string" },
+                "y": { "type": "string" }
+              },
+              "required": ["x", "y", "on_curve"]
+            }
+          },
+          {
+            "if": { "properties": { "point_class": { "const": "infinity" } }, "required": ["point_class"] },
+            "then": { "properties": { "x": { "type": "null" }, "y": { "type": "null" }, "on_curve": { "type": "null" }, "subgroup_class": { "const": "na" } } }
+          },
+          {
+            "if": { "properties": { "point_class": { "const": "out_of_range" } }, "required": ["point_class"] },
+            "then": { "properties": { "on_curve": { "type": "null" }, "subgroup_class": { "const": "na" }, "x": { "type": "string" } }, "required": ["x"] }
+          },
+          {
+            "if": { "properties": { "point_class": { "const": "wrong_curve" } }, "required": ["point_class"] },
+            "then": {
+              "properties": { "source_curve_id": { "type": "string" }, "on_curve": { "const": false }, "x": { "type": "string" }, "y": { "type": "string" } },
+              "required": ["source_curve_id", "x", "y", "on_curve"]
+            }
+          },
+          {
+            "if": { "properties": { "point_class": { "const": "twist_point" } }, "required": ["point_class"] },
+            "then": { "properties": { "on_curve": { "const": false }, "x": { "type": "string" }, "y": { "type": "string" } }, "required": ["x", "y", "on_curve"] }
+          },
+          {
+            "if": { "properties": { "point_class": { "const": "small_subgroup" } }, "required": ["point_class"] },
+            "then": {
+              "properties": {
+                "on_curve": { "const": true },
+                "subgroup_class": { "const": "small_order" },
+                "point_order": { "type": "string" },
+                "x": { "type": "string" },
+                "y": { "type": "string" }
+              },
+              "required": ["x", "y", "on_curve", "point_order"]
+            }
+          },
+          {
+            "if": { "properties": { "point_class": { "const": "on_curve_not_in_G" } }, "required": ["point_class"] },
+            "then": {
+              "properties": { "on_curve": { "const": true }, "subgroup_class": { "const": "outside" }, "x": { "type": "string" }, "y": { "type": "string" } },
+              "required": ["x", "y", "on_curve"]
+            }
+          },
+          {
+            "if": { "properties": { "validator_version": { "const": "v2_oncurve_subgroup" } }, "required": ["validator_version"] },
+            "then": {
+              "if": { "properties": { "point_class": { "const": "valid" } } },
+              "then": { "properties": { "expected_result": { "const": "accept" } } },
+              "else": { "properties": { "expected_result": { "const": "reject" } } }
+            }
+          }
+        ]
       }
     },
 
@@ -417,7 +690,7 @@
       "row_schema": {
         "type": "object",
         "properties": {
-          "metric_id": { "type": "string" },
+          "metric_id": { "$ref": "#/$defs/IdString" },
           "track": { "$ref": "#/$defs/Track" },
           "experiment": {
             "type": "string",
@@ -434,22 +707,22 @@
           },
           "phase": { "$ref": "#/$defs/MetricPhase" },
           "metric_name": { "$ref": "#/$defs/MetricName" },
-          "value": { "type": "number" },
+          "value": { "type": "number", "minimum": 0 },
           "unit": {
             "type": "string",
             "enum": ["cycles", "ns", "ms", "count", "bits", "ratio", "bool_as_0_1"],
-            "description": "Đơn vị của 'value'; với metric_name có bản chất boolean (vd forged_token_accepted, response_class_uniform) dùng unit='bool_as_0_1' và value ∈ {0,1}."
+            "description": "Đơn vị của 'value'; metric boolean (forged_token_accepted, response_class_uniform) dùng unit='bool_as_0_1' và value ∈ {0,1}."
           },
           "ref_dataset": { "$ref": "#/$defs/RefDataset" },
-          "ref_id": { "type": ["string", "null"], "description": "Id bản ghi tham chiếu trong ref_dataset (null nếu ref_dataset=none)." },
-          "subject_id": { "type": "string", "description": "Đối tượng được đo: curve_id, key_id, hoặc tên service (vd 'jwt-es256', 'ecdh-api')." },
+          "ref_id": { "$ref": "#/$defs/NullableIdString", "description": "Id bản ghi tham chiếu trong ref_dataset (null nếu ref_dataset=none)." },
+          "subject_id": { "$ref": "#/$defs/IdString", "description": "Đối tượng được đo: curve_id, key_id, hoặc tên service (vd 'jwt-es256', 'ecdh-api')." },
           "trial": { "$ref": "#/$defs/NullableNonNegativeInt" },
           "seed": { "$ref": "#/$defs/NullableNonNegativeInt" },
           "component_version": {
             "type": ["string", "null"],
             "description": "Phiên bản signer/validator/service tạo ra phép đo (vd 'vulnerable_constant', 'rfc6979', 'v2_oncurve_subgroup', 'patched_app')."
           },
-          "host_id": { "type": "string" },
+          "host_id": { "$ref": "#/$defs/IdString" },
           "git_commit": { "$ref": "#/$defs/GitCommit" },
           "timestamp": { "$ref": "#/$defs/Timestamp" },
           "notes": { "type": ["string", "null"] }
@@ -459,8 +732,117 @@
           "value", "unit", "ref_dataset", "subject_id", "host_id",
           "git_commit", "timestamp"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "ref_dataset": { "const": "none" } }, "required": ["ref_dataset"] },
+            "then": { "properties": { "ref_id": { "type": "null" } } },
+            "else": { "properties": { "ref_id": { "type": "string" } }, "required": ["ref_id"] }
+          },
+          {
+            "if": { "properties": { "metric_name": { "const": "cpu_cycles" } }, "required": ["metric_name"] },
+            "then": { "properties": { "unit": { "const": "cycles" } } }
+          },
+          {
+            "if": { "properties": { "metric_name": { "const": "wall_time_ns" } }, "required": ["metric_name"] },
+            "then": { "properties": { "unit": { "const": "ns" } } }
+          },
+          {
+            "if": { "properties": { "metric_name": { "enum": ["recovery_time_ms", "detect_time_ms"] } }, "required": ["metric_name"] },
+            "then": { "properties": { "unit": { "const": "ms" } } }
+          },
+          {
+            "if": { "properties": { "metric_name": { "enum": ["oracle_queries", "sigs_to_first_repeat"] } }, "required": ["metric_name"] },
+            "then": { "properties": { "unit": { "const": "count" }, "value": { "multipleOf": 1 } } }
+          },
+          {
+            "if": { "properties": { "metric_name": { "enum": ["bits_leaked", "candidate_space_bits_before", "candidate_space_bits_after"] } }, "required": ["metric_name"] },
+            "then": { "properties": { "unit": { "const": "bits" } } }
+          },
+          {
+            "if": { "properties": { "metric_name": { "const": "overhead_ratio" } }, "required": ["metric_name"] },
+            "then": { "properties": { "unit": { "const": "ratio" } } }
+          },
+          {
+            "if": { "properties": { "metric_name": { "enum": ["forged_token_accepted", "response_class_uniform"] } }, "required": ["metric_name"] },
+            "then": { "properties": { "unit": { "const": "bool_as_0_1" }, "value": { "enum": [0, 1] } } }
+          },
+          {
+            "if": { "properties": { "experiment": { "const": "ecdlp_benchmark" } }, "required": ["experiment"] },
+            "then": { "properties": { "track": { "const": "A" } } }
+          },
+          {
+            "if": { "properties": { "experiment": { "enum": ["nonce_recovery", "rfc6979_overhead", "jwt_demo_recovery"] } }, "required": ["experiment"] },
+            "then": { "properties": { "track": { "const": "C" } } }
+          },
+          {
+            "if": { "properties": { "experiment": { "enum": ["invalid_curve_query_count", "ecdh_demo_recovery"] } }, "required": ["experiment"] },
+            "then": { "properties": { "track": { "const": "D" } } }
+          }
+        ]
       }
     }
+  },
+
+  "expected_result_matrix": {
+    "description": "Kết quả kỳ vọng mặc định của validator theo (validator_version, point_class). Dùng để tự động điền/kiểm tra expected_result của D4. PHẢI đối chiếu lại với bảng D.4 trong docs/experimental_design.md; nếu khác thì sửa ở đây và ghi vào changelog.",
+    "rows": {
+      "v0_none": {
+        "valid": "accept", "infinity": "accept", "out_of_range": "accept", "wrong_curve": "accept",
+        "small_subgroup": "accept", "on_curve_not_in_G": "accept", "twist_point": "accept"
+      },
+      "v1_oncurve": {
+        "valid": "accept", "infinity": "reject", "out_of_range": "reject", "wrong_curve": "reject",
+        "small_subgroup": "accept", "on_curve_not_in_G": "accept", "twist_point": "reject"
+      },
+      "v2_oncurve_subgroup": {
+        "valid": "accept", "infinity": "reject", "out_of_range": "reject", "wrong_curve": "reject",
+        "small_subgroup": "reject", "on_curve_not_in_G": "reject", "twist_point": "reject"
+      },
+      "v2_uniform_response": {
+        "valid": "accept", "infinity": "reject", "out_of_range": "reject", "wrong_curve": "reject",
+        "small_subgroup": "reject", "on_curve_not_in_G": "reject", "twist_point": "reject"
+      }
+    },
+    "note": "v0_none/v1_oncurve là validator yếu (vulnerable baseline); v2_* là bản vá. expected_result mô tả hành vi THIẾT KẾ của từng phiên bản, không phải hành vi mong muốn về an ninh; một điểm xấu bị accept bởi v0/v1 vẫn là match=true."
+  },
+
+  "validation_rules": {
+    "description": "Quy tắc kiểm tra liên bản ghi / tính toán mà JSON Schema từng dòng không biểu diễn được. scripts/validate_datasets.py cài đặt các quy tắc có đánh dấu implemented=true.",
+    "severity_levels": ["error (chặn commit/CI)", "warning (ghi log, xem xét)"],
+    "rules": [
+      { "id": "GEN-01", "datasets": ["D1", "D2", "D3", "D4", "D6"], "severity": "error", "implemented": true, "rule": "Khoá chính duy nhất (kể cả khoá ghép như D4: point_id + validator_version; D2: curve_id + algorithm + trial; D3: run_id + sig_index)." },
+      { "id": "GEN-02", "datasets": ["D2", "D3", "D4", "D6"], "severity": "error", "implemented": true, "rule": "Mọi foreign key phải tồn tại trong dataset được tham chiếu." },
+      { "id": "GEN-03", "datasets": ["D1", "D2", "D3", "D4", "D6"], "severity": "warning", "implemented": false, "rule": "git_commit phải tồn tại trong lịch sử repo (git cat-file -e)." },
+      { "id": "D1-01", "datasets": ["D1"], "severity": "error", "implemented": true, "rule": "p nguyên tố (Miller–Rabin) và p_bits == p.bit_length()." },
+      { "id": "D1-02", "datasets": ["D1"], "severity": "error", "implemented": true, "rule": "discriminant == (4a^3 + 27b^2) mod p và != 0." },
+      { "id": "D1-03", "datasets": ["D1"], "severity": "error", "implemented": true, "rule": "Giới hạn Hasse: |E_count - (p+1)| <= 2*sqrt(p); trace_t == p + 1 - E_count." },
+      { "id": "D1-04", "datasets": ["D1"], "severity": "error", "implemented": true, "rule": "Tích prime^exponent của E_count_factorization == E_count; của n_factorization == subgroup_n; các prime tăng dần, không lặp." },
+      { "id": "D1-05", "datasets": ["D1"], "severity": "error", "implemented": true, "rule": "cofactor_h * subgroup_n == E_count; n_bits == subgroup_n.bit_length(); n_is_prime == (n_factorization là 1 prime với mũ 1)." },
+      { "id": "D1-06", "datasets": ["D1"], "severity": "error", "implemented": true, "rule": "largest_prime_factor_n == max prime trong n_factorization; is_anomalous == (E_count == p)." },
+      { "id": "D1-07", "datasets": ["D1"], "severity": "error", "implemented": true, "rule": "Điểm cơ sở G=(base_point_x, base_point_y) thoả phương trình đường cong và 0 <= x,y < p." },
+      { "id": "D1-08", "datasets": ["D1"], "severity": "error", "implemented": false, "rule": "n * G == O (kiểm bằng cài đặt nhân vô hướng), và với mọi prime q | n: (n/q) * G != O (bậc đúng bằng n)." },
+      { "id": "D1-09", "datasets": ["D1"], "severity": "warning", "implemented": true, "rule": "Curve toy dùng cho Track A nên có n_bits trong 16..40 (theo kế hoạch T3); curve ngoài khoảng này phải có ghi chú trong notes." },
+      { "id": "D1-10", "datasets": ["D1"], "severity": "warning", "implemented": true, "rule": "category=smooth_order nên có largest_prime_factor_n nhỏ hơn đáng kể so với n (gợi ý: bit(q_max) <= n_bits/2)." },
+      { "id": "D2-01", "datasets": ["D2"], "severity": "error", "implemented": true, "rule": "n_bits == D1.n_bits của curve_id; 1 <= d_true < D1.subgroup_n." },
+      { "id": "D2-02", "datasets": ["D2"], "severity": "error", "implemented": true, "rule": "recovered=true => d_recovered == d_true (với G bậc n nguyên tố/đủ lớn để nghiệm duy nhất mod n)." },
+      { "id": "D2-03", "datasets": ["D2"], "severity": "warning", "implemented": true, "rule": "Với mỗi (curve_id, algorithm) nên có >= 5 trial để thống kê trung vị/IQR; cảnh báo nếu ít hơn." },
+      { "id": "D2-04", "datasets": ["D2"], "severity": "warning", "implemented": true, "rule": "BSGS: memory_entries xấp xỉ m = ceil(sqrt(n)); Pollard rho/BSGS operations nên cỡ O(sqrt(n)) — cảnh báo nếu operations > 50*sqrt(n)." },
+      { "id": "D3-01", "datasets": ["D3"], "severity": "error", "implemented": true, "rule": "repeated_r (ground truth) == (tồn tại chữ ký khác cùng key_id có cùng r); các chữ ký cùng repeated_r_group_id có cùng (key_id, r)." },
+      { "id": "D3-02", "datasets": ["D3"], "severity": "error", "implemented": true, "rule": "Với curve toy: 1 <= r, s < D1.subgroup_n của curve_id; với P-256/secp256k1: r, s < n chuẩn của curve." },
+      { "id": "D3-03", "datasets": ["D3"], "severity": "error", "implemented": false, "rule": "Verify được chữ ký (r, s) bằng (pub_x, pub_y) và msg_hash." },
+      { "id": "D3-04", "datasets": ["D3"], "severity": "error", "implemented": false, "rule": "Nếu có ground_truth_k: r == x(k*G) mod n và s == k^-1 (h + r*d) mod n." },
+      { "id": "D3-05", "datasets": ["D3"], "severity": "error", "implemented": true, "rule": "signer_version=rfc6979 => không có cặp (key_id, msg_hash) khác nhau cho cùng r; cùng (key_id, msg_hash) phải cho cùng (r, s)." },
+      { "id": "D3-06", "datasets": ["D3"], "severity": "warning", "implemented": true, "rule": "Mỗi key_id chỉ gắn với 1 signer_version trong 1 run_id; sig_index liên tục từ 0 trong run_id." },
+      { "id": "D4-01", "datasets": ["D4"], "severity": "error", "implemented": true, "rule": "match == (validator_result == expected_result)." },
+      { "id": "D4-02", "datasets": ["D4"], "severity": "error", "implemented": true, "rule": "expected_result khớp expected_result_matrix[validator_version][point_class]." },
+      { "id": "D4-03", "datasets": ["D4"], "severity": "error", "implemented": true, "rule": "Với dòng có x,y và on_curve != null: on_curve == (y^2 == x^3 + ax + b mod p của D1[curve_id]); 0<=x,y<p trừ out_of_range." },
+      { "id": "D4-04", "datasets": ["D4"], "severity": "error", "implemented": true, "rule": "Các thuộc tính ground truth của 1 point_id (curve_id, x, y, point_class, on_curve, point_order, subgroup_class) phải giống nhau trên mọi validator_version." },
+      { "id": "D4-05", "datasets": ["D4"], "severity": "error", "implemented": true, "rule": "point_class=small_subgroup: point_order | #E của curve nguồn (curve_id hoặc source_curve_id) và point_order thuộc small_order_available hoặc là ước của h; subgroup_class=in_subgroup => point_order | n." },
+      { "id": "D4-06", "datasets": ["D4"], "severity": "error", "implemented": true, "rule": "Mọi point_id phải có đủ 1 dòng cho mỗi validator_version được thử trong run_id (không thiếu ô trong ma trận điểm × validator)." },
+      { "id": "D6-01", "datasets": ["D6"], "severity": "error", "implemented": true, "rule": "Nếu ref_dataset != none: ref_id tồn tại trong dataset tham chiếu (D1.curve_id | D2.record_id | D3.sig_id/run_id | D4.point_id/run_id)." },
+      { "id": "D6-02", "datasets": ["D6"], "severity": "warning", "implemented": true, "rule": "overhead_ratio (RFC 6979 vs vulnerable) thường ≈ 1; cảnh báo nếu > 10." },
+      { "id": "D6-03", "datasets": ["D6"], "severity": "warning", "implemented": true, "rule": "bits_leaked <= log2(D1.subgroup_n của curve chính) và candidate_space_bits_after <= candidate_space_bits_before khi cùng (subject_id, trial)." }
+    ]
   }
 }
