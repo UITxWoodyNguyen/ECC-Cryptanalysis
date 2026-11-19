@@ -1,6 +1,6 @@
 # Experimental Design — Track A, C, D (Topic 14)
 
-> **Trạng thái:** DRAFT v0.1 · **Liên kết:** `docs/threat_model_draft.md` (tầng L0, L3, L2) · `curves/math_notes.md` · `docs/references.md`
+> **Trạng thái:** DRAFT v0.3 (đã bổ sung: Secure Storage tích hợp C/D; Track A chạy Pollard's rho dài hạn §A.11; Track C dùng `k=4` làm demo mặc định §C.4; Track D sinh điểm tất định từ seed + tự xác minh bậc §D.3) · **Liên kết:** `docs/threat_model.md` (tầng L0, L3, L2) · `curves/math_notes.md` · `docs/references.md`
 > **Phạm vi an toàn:** toàn bộ target là code/toy curve/container do nhóm kiểm soát; khoá là **disposable lab key**; không dùng production key, không tấn công public chain.
 > Mọi thí nghiệm theo vòng: **vulnerable baseline → evidence → mitigation → identical re-test** (checklist mục 17 của đề).
 
@@ -176,6 +176,37 @@ git_commit, host_id
 ## A.10 Đầu ra Track A
 `data/D1.csv`, `data/D2.csv`, FA1–FA4, `results/trackA/summary.md` (bảng slope ± CI, kết luận HA1–HA4).
 
+## A.11 Thực nghiệm mở rộng — Pollard's rho dài hạn (qua đêm)
+
+> Bổ sung theo góp ý giảng viên: ngoài benchmark chuẩn ở A.2–A.3 (trần
+> `n_bits ≤ 48`, timeout 10 phút/trial để so sánh slope), chạy **thêm một
+> đợt riêng, dài hạn** chỉ với Pollard's rho — thuật toán được chọn làm
+> trọng tâm của Track A vì không cần bảng tra lớn, dễ mở rộng kích thước.
+
+**Mục tiêu:** đo trực tiếp **kích thước ECDLP lớn nhất thực sự giải được**
+trong một khoảng thời gian cố định trên phần cứng của nhóm — một con số
+thực nghiệm, không phải ngoại suy lý thuyết như A.8.
+
+| Tham số | Giá trị |
+|---|---|
+| Thuật toán | Pollard's rho (bản song song nhiều walk nếu kịp, không bắt buộc) |
+| `n_bits` | Tăng dần từ trần đã dùng ở A.3 (vd 48, 52, 56...) cho đến khi hết thời gian chạy hoặc hết tài nguyên |
+| Thời lượng | 1 đợt qua đêm (≥ 8 giờ liên tục), ghi lại tiến trình theo thời gian thực, không chỉ kết quả cuối |
+| Điều kiện dừng | Hết thời gian đã định, **hoặc** giải được 1 kích thước rồi tự động tăng `n_bits` và chạy tiếp cho tới khi dừng |
+| Ghi nhận | Kích thước `n_bits` lớn nhất có `recovered=True`; số collision/restart đã xảy ra; đường cong thời gian theo `n_bits` để so sánh với slope đo được ở A.7 |
+
+**Khác biệt so với A.2–A.9:** đây KHÔNG phải thí nghiệm đối chứng thống kê
+(không cần 30 trial/điểm) — mục đích là **một con số kỷ lục thực tế**, dùng
+làm bằng chứng cụ thể trong phần trình bày/bảo vệ, bổ sung cho (không thay
+thế) bảng slope chính ở A.7. Không đặt trước một ngưỡng "phải đạt được" —
+tiêu chí thành công là **đo được và ghi lại trung thực**, dù kết quả là bao
+nhiêu.
+
+**Đầu ra riêng:** `data/D2_overnight.csv` (hoặc đánh dấu `experiment=
+overnight_max_size` trong D2 chính) + 1 dòng kết luận trong `track_a_report.md`:
+*"Trong N giờ chạy liên tục, Pollard's rho trên phần cứng của nhóm giải được
+ECDLP tới tối đa X bit."*
+
 ---
 
 # TRACK C — ECDSA Nonce Reuse (JWT ES256 Lab)
@@ -219,7 +250,7 @@ git_commit, host_id
 ## C.4 Failure modes (vulnerable signer)
 | Mode | Cơ chế `k` | Lớp (`nonce_class`) | Mô phỏng |
 |------|-----------|---------------------|-----------|
-| F1 | `k` hằng số | `reuse_constant` | Mã ký "cứng" k |
+| F1 | `k` hằng số | `reuse_constant` | Mã ký "cứng" k — **dùng giá trị cụ thể `k=4`** làm tham số demo mặc định (nhỏ, dễ trình bày/giải thích bằng tay trong báo cáo); vẫn hỗ trợ truyền `k` tuỳ ý qua `strategy_kwargs`. *Lưu ý: nhóm chưa xác minh được mã CVE cụ thể nào ghi nhận chính xác giá trị `k=4`; nếu có nguồn, bổ sung vào `docs/references.md` trước khi trích dẫn chính thức — nếu không, trình bày như kịch bản minh hoạ, không gắn CVE.* |
 | F2 | PRNG seed từ thời gian thô/boot counter, restart nhiều lần | `reuse_restart` | Seed ∈ tập nhỏ ⇒ va chạm giữa các lần restart |
 | F3 | Với xác suất `ρ`, dùng lại `k` trước đó | `reuse_sparse` | Rò rỉ lẻ tẻ (race/cache) |
 | F4 | `k` có entropy thấp (vd 32-bit) | `low_entropy` | (tuỳ chọn, L4 — liệt kê ứng viên) |
@@ -375,10 +406,25 @@ Schema: `curve_id, point_class, on_curve, subgroup_class, validator_result, prot
 ```
 
 ### D.3 (chi tiết) Chọn `E'ᵢ` và điểm bậc nhỏ — mức thiết kế
-- Duyệt `b'` ≠ `b` (cùng `p, a`), loại curve singular; đếm `#E'(b')` bằng PARI/Sage.
-- Giữ `b'` mà `#E'` có ước nguyên tố nhỏ `r` (≤ 2¹⁰, chưa dùng); điểm bậc `r` = `(#E'/r)·R` với `R` ngẫu nhiên, `≠ O`.
+- **Quy trình 2 bước, tất định từ `seed`:**
+  1. **Sinh (seed → curve/point):** từ 1 `seed` cố định, duyệt `b'` ≠ `b`
+     (cùng `p, a`) theo thứ tự tất định do `seed` quyết định; loại curve
+     singular; đếm `#E'(b')` bằng PARI/Sage. Giữ `b'` mà `#E'` có ước
+     nguyên tố nhỏ `r` (≤ 2¹⁰, chưa dùng); điểm bậc `r` = `(#E'/r)·R` với
+     `R` dẫn xuất tất định từ `seed` (không ngẫu nhiên tại chỗ), `≠ O`.
+  2. **Tự xác minh (BẮT BUỘC, trước khi dùng điểm để tấn công):** tính lại
+     độc lập bậc thật của điểm vừa dựng (`order(P) == r` bằng cách thử
+     `(r/q)·P ≠ O` với mọi ước nguyên tố `q` của `r`, và `r·P == O`) — xác
+     nhận điểm "thực sự hợp lệ" đúng bậc đã khai báo trước khi gửi vào dịch
+     vụ mục tiêu. Nếu xác minh thất bại, loại điểm và thử `b'` kế tiếp
+     (không bao giờ dùng điểm chưa qua bước này).
+  - Lý do bắt buộc bước 2: nếu không tự xác minh, mọi kết luận "điểm này
+    khai thác được" chỉ là giả định của người viết thực nghiệm, không phải
+    bằng chứng — đúng nguyên tắc tự-kiểm `d·G==Q` đã áp dụng xuyên suốt các
+    track khác.
 - Dừng khi `∏ rᵢ ≥ n` (hoặc `≥ n/2` kết hợp tìm kiếm cuối).
 - Code attacker **chỉ chấp nhận** curve toy (`assert n_bits <= 40`, `LAB-` key) — xem 1.5.
+- Ghi `seed` dùng để sinh `E'ᵢ`/điểm vào `data/D4_validation.csv` (trường `seed` đã có sẵn trong schema) để tái lập đúng cùng 1 bộ điểm tấn công.
 
 ## D.6 Biến thí nghiệm
 | Biến | Giá trị |
@@ -439,6 +485,69 @@ Hình: FD1 candidate-space shrink vs `queries` (vuln vs patched); FD2 `queries` 
 
 ---
 
+# BỔ SUNG — Secure Storage (TB5), tích hợp tối giản vào System Demo 1 & 2
+
+> **Vì sao có mục này:** đồ án cần phủ 3 góc nhìn ngang hàng — Secure
+> Communication (đã phủ bởi Track D), Secure Process Logic (đã phủ bởi
+> `forge_admin` của Track C và lỗi validate của Track D), và **Secure
+> Storage** — trước đó chỉ dừng ở TB5 trong `docs/threat_model.md`, chưa có
+> thực nghiệm. Mục này bổ sung **tối thiểu**, không dựng track/demo mới,
+> không đổi lịch `docs/project_plan.md` quá T7/T9 đã có.
+
+## S.1 Mục tiêu & giả thuyết
+
+| ID | Giả thuyết | Kiểm chứng |
+|----|-----------|------------|
+| HS1 | Nếu khóa dài hạn (`d_sign`/`d_dh`) lưu plaintext trên đĩa, đọc được file = lộ khóa ngay — **không cần bất kỳ kỹ thuật cryptanalysis nào** (không ECDLP, không nonce reuse, không invalid-curve) | Thử đọc file trực tiếp, parse ra `d`, xác nhận `d·G==Q` |
+| HS2 | Nếu khóa được mã hoá tại chỗ (key derivation từ passphrase KHÔNG lưu cùng file) + quyền file `0600`, đọc file không suy ra được `d` nếu không có passphrase | Thử đọc file đã vá, xác nhận KHÔNG parse được `d` |
+| HS3 | Hai lớp phòng thủ (nonce-safety ở Track C, storage-safety ở đây) là **độc lập** — vá cái này không tự động vá cái kia | So khớp ma trận 2×2: {nonce an toàn / không} × {storage an toàn / không} |
+
+## S.2 Thiết kế — `signatures/key_storage.py` (thư viện dùng chung C & D)
+
+```
+save_key_plaintext(d: int, path)              # Chế độ DỄ TỔN THƯƠNG
+load_key_plaintext(path) -> int                #   JSON thường, KHÔNG chmod (quyền mặc định OS)
+
+save_key_protected(d: int, path, passphrase)   # Chế độ ĐÃ VÁ
+load_key_protected(path, passphrase) -> int    #   mã hoá bằng khóa dẫn xuất từ passphrase (KDF,
+                                                #   vd scrypt/PBKDF2) + os.chmod(path, 0o600);
+                                                #   passphrase KHÔNG BAO GIỜ lưu cùng file khóa
+                                                #   (vd lấy từ biến môi trường lúc chạy)
+```
+
+- `system-demos/jwt-es256/app.py` và `system-demos/ecdh-api/app.py` (bản dễ tổn thương): nạp
+  `d_sign`/`d_dh` qua `save/load_key_plaintext`.
+- `system-demos/jwt-es256/patched_app.py` và `system-demos/ecdh-api/patched_app.py` (bản đã vá):
+  nạp qua `save/load_key_protected`.
+- **Không tạo notebook attacker mới.** `test_retest.ipynb` (đã có kế hoạch cho cả 2 demo) thêm
+  đúng 1 bước: thử đọc trực tiếp file khóa trên đĩa (`open(path).read()` hoặc tương đương),
+  cố gắng parse ra `d`, kiểm `d·G==Q`.
+
+## S.3 Dữ liệu thu (ghi vào `data/D6_timing.csv`, không cần dataset mới)
+
+```
+experiment = "key_storage_access"
+metric_name = "key_extracted"   (0/1, unit=bool_as_0_1)
+component_version = "plaintext_storage" | "protected_storage"
+subject_id = "jwt-es256" | "ecdh-api"
+phase = "vulnerable" | "patched"
+```
+*(2 giá trị `experiment`/`metric_name` này cần thêm vào enum tương ứng trong
+`data/schema_definition.json` — xem bản cập nhật kèm theo.)*
+
+## S.4 Tiêu chí chấp nhận
+
+- Chế độ plaintext: `key_extracted = 1` ở **100%** lần thử (không cần kỹ thuật gì ngoài quyền đọc file).
+- Chế độ protected: `key_extracted = 0` ở **100%** lần thử khi KHÔNG có passphrase; `= 1` khi CÓ passphrase đúng (self-test xác nhận chế độ vá vẫn dùng được bình thường, không chỉ là "khoá cứng không mở được").
+- Ma trận S.1/HS3 phải thể hiện rõ: {RFC 6979 + plaintext storage} vẫn bị lộ khóa hoàn toàn qua đường storage — minh chứng 2 lớp phòng thủ độc lập.
+
+## S.5 Đầu ra
+Không có file/report riêng — kết quả gộp vào `docs/system_demo_jwt.md` và
+`docs/system_demo_ecdh.md` (mỗi báo cáo thêm 1 mục nhỏ "Secure Storage"), và
+`docs/residual_risk.md` dẫn chiếu TB5 đã được kiểm chứng thay vì chỉ liệt kê.
+
+---
+
 ## E. Kế hoạch thực hiện & phụ thuộc
 
 | Tuần | Việc | Đầu ra | Phụ thuộc |
@@ -447,6 +556,7 @@ Hình: FD1 candidate-space shrink vs `queries` (vuln vs patched); FD2 `queries` 
 | 5 | Track C: C0–C2 (signer, JWT, corpus) | D3 (vuln) | `ecc.py` từ A |
 | 6 | Track C: C3–C7 (detect, recover, impact, vá, rotate, re-test) | Bảng before/after | Tuần 5 |
 | 7 | Track D: D0–D5 + ablation | D4, FD1–FD4 | `curves` từ A |
+| 7, 9 | **Bổ sung:** `key_storage.py` + tích hợp vào `app.py`/`patched_app.py`/`test_retest` của cả 2 demo | D6 (`key_storage_access`) | Track C (T7), Track D (T9) |
 | 10–11 | Gộp metric, residual-risk, đưa vào báo cáo | `results/summary.md` | A, C, D |
 
 ## F. Checklist nghiệm thu (đối chiếu đề)
