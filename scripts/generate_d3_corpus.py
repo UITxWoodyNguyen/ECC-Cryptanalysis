@@ -2,7 +2,7 @@
 scripts/generate_d3_corpus.py
 ================================
 
-Tạo data/D3_signatures.csv từ signatures/base_signer.py +
+Sinh data/D3_signatures.csv từ signatures/base_signer.py +
 signatures/vulnerable_signer.py, tính ground-truth repeated_r, QA bằng
 signatures/nonce_reuse_attacker.py, rồi mới ghi CSV.
 
@@ -146,7 +146,7 @@ def main() -> None:
         raise SystemExit("QA THAT BAI -- khong ghi file. Kiem tra lai generator truoc khi chay lai.")
 
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-    with open(OUT_PATH, "w", newline="") as f:
+    with open(OUT_PATH, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=FIELDNAMES)
         w.writeheader()
         w.writerows(all_rows)
