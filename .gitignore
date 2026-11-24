@@ -1,3 +1,2 @@
 .opencode/
-
-__pycache__/
+.vscode/

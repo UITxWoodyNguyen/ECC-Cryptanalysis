@@ -1,6 +1,5 @@
 """
 curves/exhaustive_search.py
-===========================
 Exhaustive Scalar Search cho ECDLP: cho G (bậc n) và Q = d*G, tìm d.
 
 Thuật toán: thử k = 1, 2, ..., n-1 với R_k = R_{k-1} + G cho đến khi R_k == Q.
