@@ -1,563 +1,584 @@
-# Math Notes — Cơ Sở Toán Học ECC
-## Group Order $n$, Cofactor $h$, Scalar Multiplication & Work Factor Analysis
+# Cơ sở toán học của ECC 
 
-> [!NOTE]
-> **Metadata Đề Tài & Phiên Bản**
-> - **Chủ đề:** Topic 14 — ECC Cryptanalysis & Implementation Failure Engineering
-> - **Phạm vi tài liệu:** Task 2 · Nền tảng toán học cho Track A (Generic Search), Track B (Unsafe Order), và Track D (Invalid-Curve / Small-Subgroup).
-> - **Phương pháp luận:** Kết hợp giải tích đại số chuẩn mực, mô hình độ phức tạp thuật toán và thực nghiệm kiểm chứng trên **toy curve** có thể tái lập 100% bằng mã nguồn đính kèm (§8).
-> - **Đối chiếu tiêu chuẩn:** NIST SP 800-186, RFC 6090, FIPS 186-5, RFC 7748.
-
----
-
-## Mục Lục
-1. [Khung Cảnh Đường Cong và Cấu Trúc Nhóm Điểm](#1-khung-cảnh-đường-cong-và-cấu-trúc-nhóm-điểm)
-2. [Cấp của Nhóm Điểm $\#E$ và Định Lý Hasse](#2-cấp-của-nhóm-điểm-e-và-định-lý-hasse)
-3. [Bậc Điểm, Subgroup Order $n$ và Cofactor $h$](#3-bậc-điểm-subgroup-order-n-và-cofactor-h)
-4. [Phép Nhân Vô Hướng (Scalar Multiplication) $Q = [d]G$](#4-phép-nhân-vô-hướng-scalar-multiplication-q--dg)
-5. [Bài Toán Logarithm Rời Rạc (ECDLP) & Đánh Giá Work Factor](#5-bài-toán-logarithm-rời-rạc-ecdlp--đánh-giá-work-factor)
-6. [Checklist 10 Tiêu Chí Cấu Trúc Tham Số An Toàn (Domain Parameters)](#6-checklist-10-tiêu-chí-cấu-trúc-tham-số-an-toàn-domain-parameters)
-7. [Quy Trình Validation Điểm & Cơ Chế Invalid-Curve Attack](#7-quy-trình-validation-điểm--cơ-chế-invalid-curve-attack)
-8. [Mã Nguồn Kiểm Chứng Thực Nghiệm Toy Curve (Python 3)](#8-mã-nguồn-kiểm-chứng-thực-nghiệm-toy-curve-python-3)
-9. [Bảng Ánh Xạ Lý Thuyết Vào Các Track Thực Nghiệm & Bộ Dữ Liệu D1–D6](#9-bảng-ánh-xạ-lý-thuyết-vào-các-track-thực-nghiệm--bộ-dữ-liệu-d1d6)
-10. [Giới Hạn Nghiên Cứu & Khuyến Nghị Thực Hành](#10-giới-hạn-nghiên-cứu--khuyến-nghị-thực-hành)
-
----
-
-## 1. Khung Cảnh Đường Cong và Cấu Trúc Nhóm Điểm
-
-### 1.1 Phương trình Short Weierstrass
-Trên trường hữu hạn nguyên tố $\mathbb{F}_p$ với đặc trưng $\operatorname{char}(\mathbb{F}_p) = p > 3$, mọi đường cong elliptic đều có thể đưa về dạng rút gọn **Short Weierstrass**:
-
-$$E(\mathbb{F}_p): y^2 \equiv x^3 + ax + b \pmod{p}, \quad a, b \in \mathbb{F}_p$$
-
-Điều kiện cần và đủ để đường cong trơn (không có điểm kỳ dị) là biệt thức đại số (discriminant) $\Delta$ khác $0$:
-
-$$\Delta = -16\left(4a^3 + 27b^2\right) \not\equiv 0 \pmod{p}$$
-
-> [!WARNING]
-> Khi $\Delta \equiv 0 \pmod{p}$, phương trình $x^3 + ax + b = 0$ có nghiệm bội:
-> - **Cusp (Điểm nhọn):** Khi $4a^3 + 27b^2 \equiv 0$ và $a \equiv b \equiv 0 \pmod{p}$ $\implies y^2 = x^3$. Nhóm điểm suy biến thành nhóm cộng của trường $(\mathbb{F}_p, +)$, bài toán DLP giải được trong thời gian $\mathcal{O}(1)$.
-> - **Node (Điểm tự cắt):** Khi $4a^3 + 27b^2 \equiv 0$ với $a, b \not\equiv 0 \pmod{p}$. Nhóm điểm suy biến thành nhóm nhân $(\mathbb{F}_p^\times, \cdot)$ hoặc $(\mathbb{F}_{p^2}^\times, \cdot)$, DLP quy về tính toán chỉ mục (index calculus) thời gian dưới-hàm-mũ $\mathcal{O}\left(L_p[1/2]\right)$.
+> [!note]
+> **Phạm vi toán học:** 
+> - Đường cong elliptic
+> - Nhóm điểm
+> - Phép nhân vô hướng (scalar multiplication)
+> - Bậc `n`
+> - Cofactor `h`
+> - Bài toán logarit rời rạc (ECDLP).
 >
-> Do đó, kiểm tra $\Delta \not\equiv 0 \pmod{p}$ là bước tiên quyết số 1 của mọi bộ parser tham số.
+> **Các track liên quan:**
+> - Track A: Generic Search 
+> - Track B: Unsafe Order/Pohlig–Hellman
+> - Track C: ECDSA Nonce Reuse
+> - Track D: Point Validation/Invalid-Curve
+> - Track F: Side-channel.
+>
+> **Tài liệu chuẩn:** NIST SP 800-186, RFC 6090, FIPS 186-5, RFC 7748 và RFC 8032.
 
-### 1.2 Tập hợp điểm và Phần tử đơn vị
-Tập hợp các điểm hữu tỉ của $E$ trên $\mathbb{F}_p$, ký hiệu là $E(\mathbb{F}_p)$, bao gồm các nghiệm Affine cùng với một điểm duy nhất ở vô cực $\mathcal{O}$:
+## Mục lục
 
-$$E(\mathbb{F}_p) = \left\{ (x, y) \in \mathbb{F}_p \times \mathbb{F}_p : y^2 \equiv x^3 + ax + b \pmod{p} \right\} \cup \{\mathcal{O}\}$$
+- [I. Tọa độ Affine](#i-tọa-độ-affine)
+  - [1. Khái niệm](#1-khái-niệm)
+  - [2. Điều kiện không suy biến](#2-điều-kiện-không-suy-biến)
+  - [3. Nhóm EC (EC Groups)](#3-nhóm-ec-ec-groups)
+  - [4. Phép cộng theo hình học (Geometric Addition)](#4-phép-cộng-theo-hình-học-geometric-addition)
+  - [5. Phép cộng theo đại số (Algebraic Addition)](#5-phép-cộng-theo-đại-số-algebraic-addition)
+  - [6. Biểu diễn trên trường hữu hạn và điểm ở vô cực](#6-biểu-diễn-trên-trường-hữu-hạn-và-điểm-ở-vô-cực)
+- [II. Tọa độ Jacobian](#ii-tọa-độ-jacobian)
+  - [Công thức nhân đôi 2P](#ii-tọa-độ-jacobian)
+  - [Công thức cộng P₁ + P₂](#ii-tọa-độ-jacobian)
+- [III. Áp dụng EC vào ECC](#iii-áp-dụng-ec-vào-ecc)
+  - [1. Các khái niệm nền tảng](#1-các-khái-niệm-nền-tảng)
+  - [2. Định lý Hasse](#2-định-lý-hasse)
+    - [2.1. Xác định chính xác cấp nhóm \#E(𝔽ₚ)](#2-định-lý-hasse)
+    - [2.2. Các cấu trúc nhóm cần loại trừ khi chọn đường cong](#22-các-cấu-trúc-nhóm-cần-loại-trừ-khi-chọn-đường-cong)
+  - [3. Cofactor](#3-cofactor)
+  - [4. Thuật toán Double-and-Add](#4-thuật-toán-double-and-add)
+  - [5. Ví dụ minh họa nhỏ](#5-ví-dụ-minh-họa-nhỏ)
+- [IV. Bài toán Logarit rời rạc trên EC (ECDLP)](#iv-bài-toán-logarit-rời-rạc-trên-ec-ecdlp)
+  - [1. Các thuật toán giải ECDLP và work factor](#1-các-thuật-toán-giải-ecdlp-và-work-factor)
+    - [A. Exhaustive Search (Brute force)](#a-exhaustive-search-brute-forces)
+    - [B. Baby-Step Giant-Step (BSGS)](#b-baby-step-giant-step-bsgs)
+    - [C. Pollard's rho](#c-pollards-rho)
+    - [D. Pohlig–Hellman (bậc hợp số trơn)](#d-pohlighellman-bậc-hợp-số-trơn)
+- [V. 10 tiêu chí cấu trúc tham số an toàn (Domain Parameters)](#v-10-tiêu-chí-cấu-trúc-tham-số-an-toàn-domain-parameters)
+- [VI. Validation điểm công khai và Invalid-Curve Attack](#vi-validation-điểm-công-khai-và-invalid-curve-attack)
+  - [1. Nền tảng của Invalid-Curve Attack](#1-nền-tảng-của-invalid-curve-attack)
+  - [2. Quy trình validation điểm công khai](#2-quy-trình-validation-điểm-công-khai)
+  - [3. Cơ chế đại số của Invalid-Curve Attack](#3-cơ-chế-đại-số-của-invalid-curve-attack)
+- [VII. Ánh xạ lý thuyết vào các track thực nghiệm và dữ liệu D1–D6](#vii-ánh-xạ-lý-thuyết-vào-các-track-thực-nghiệm-và-dữ-liệu-d1d6)
+- [VIII. Giới hạn nghiên cứu và thực hành](#viii-giới-hạn-nghiên-cứu-và-thực-hành)
+- [Tóm tắt nhanh](#tóm-tắt-nhanh)
 
-Trong hệ tọa độ xạ ảnh đồng nhất $[X : Y : Z] \in \mathbb{P}^2(\mathbb{F}_p)$ với $x = X/Z, y = Y/Z$, điểm ở vô cực tương ứng với nghiệm duy nhất khi cắt đường thẳng $Z = 0$:
+---
 
-$$\mathcal{O} = [0 : 1 : 0]$$
+### Ký hiệu thống nhất: 
+- `G` là điểm gốc (base point)
+- `n` là **bậc của G**
+- `h` là cofactor
+- `d` là **khóa bí mật**
+- `Q = dG` là khóa công khai.
 
-$\mathcal{O}$ đóng vai trò là **phần tử trung hòa (identity element)** của nhóm:
+---
 
-$$\forall P \in E(\mathbb{F}_p): \quad P + \mathcal{O} = \mathcal{O} + P = P$$
+## I. Tọa độ Affine
 
-### 1.3 Luật cộng điểm (Chord-and-Tangent Group Law)
-Cấu trúc nhóm cộng Abel $(E(\mathbb{F}_p), +)$ được thiết lập qua quy tắc dây cung và tiếp tuyến hình học:
+### 1. Khái niệm
 
-```mermaid
-flowchart TD
-    Start["Xét 2 điểm P, Q ∈ E(𝔽_p)"] --> CheckInf{"P hoặc Q là điểm vô cực 𝒪?"}
-    CheckInf -- "P = 𝒪" --> RetQ["Kết quả: Q"]
-    CheckInf -- "Q = 𝒪" --> RetP["Kết quả: P"]
-    CheckInf -- "Không" --> CheckInv{"x_1 = x_2 và y_1 = -y_2 mod p?"}
-    CheckInv -- "Đúng (P = -Q)" --> RetInf["Kết quả: 𝒪 (Điểm vô cực)"]
-    CheckInv -- "Sai" --> CheckDouble{"P = Q (Nhân đôi điểm)?"}
-    CheckDouble -- "Đúng" --> SlopeTangent["Hệ số tiếp tuyến: λ = (3x₁² + a) / (2y₁) mod p"]
-    CheckDouble -- "Sai" --> SlopeChord["Hệ số cát tuyến: λ = (y₂ - y₁) / (x₂ - x₁) mod p"]
-    SlopeTangent --> CompCoord["x₃ = λ² - x₁ - x₂ mod p<br/>y₃ = λ(x₁ - x₃) - y₁ mod p"]
-    SlopeChord --> CompCoord
-    CompCoord --> RetPoint["Kết quả: R(x₃, y₃) = P + Q"]
+Đường cong Elliptic (Elliptic Curve – EC) là một lớp đường cong đại số. Dạng Weierstrass rút gọn (hợp lệ khi đặc số của trường khác 2 và 3, ví dụ $\colorbox{#f6f6f6}{p > 3}$ nguyên tố):
+
+$$\colorbox{#f6f6f6}{$\displaystyle y^2 = x^3 + ax + b$}$$
+
+- Hệ số $(a, b)$ là **hằng số**.
+- Tọa độ $(x, y)$ phải thuộc một trường $K$ xác định (trong ECC thực tế là trường hữu hạn $\mathbb{F}_p$).
+
+### 2. Điều kiện không suy biến
+
+Đường cong không được có **điểm lùi (cusp)** hoặc **điểm tự giao (node)**. Điều kiện tương đương: đa thức $f(x) = x^3 + ax + b$ không có nghiệm bội, tức:
+
+$$\colorbox{#f6f6f6}{$\displaystyle \Delta = 4a^3 + 27b^2 \neq 0$}$$
+
+(Trên $\mathbb{F}_p$, phép kiểm tra thực hiện **mod p**)
+
+***Ví dụ:***
+$y^2 = x^3 - x + 1 => \Delta = 4(-1)^3 + 27 = 23 \neq 0$ → hợp lệ.
+
+### 3. Nhóm EC (EC Groups)
+
+Tập các điểm trên đường cong cùng điểm vô cùng $O$, với phép toán "cộng điểm" (Point Addition), tạo thành một **nhóm Abel**. Nhóm Abel thỏa 5 tính chất:
+
+| Tính chất | Phát biểu |
+|---|---|
+| Khép kín (Closure) | $\colorbox{#f6f6f6}{P + Q = R}$ cũng nằm trên đường cong |
+| Phần tử đơn vị (Identity) | Tồn tại $O$ (điểm vô cùng, tọa độ xạ ảnh $(0:1:0)$) sao cho $$\colorbox{#f6f6f6}{$\displaystyle P + O = P, \quad \forall P$}$$ |
+| Phần tử nghịch đảo (Inverse) | Mọi $P = (x, y)$ có $-P = (x, -y)$ sao cho $$\colorbox{#f6f6f6}{$\displaystyle P + (-P) = O$}$$ |
+| Kết hợp (Associativity) | $$\colorbox{#f6f6f6}{$\displaystyle P + (Q + R) = (P + Q) + R$}$$ |
+| Giao hoán (Commutativity) | $$\colorbox{#f6f6f6}{$\displaystyle P + Q = Q + P$}$$ |
+
+### 4. Phép cộng theo hình học (Geometric Addition)
+
+Cho $P = (x_1, y_1)$ và $Q = (x_2, y_2)$ trên EC.
+
+**Quy tắc "chord-and-tangent":**
+
+1. Nếu $P \neq Q$: nối $P, Q$ thành một đường thẳng.
+2. Tìm giao điểm thứ 3 của đường thẳng với EC, gọi là $R$.
+3. Lấy $R'$ đối xứng với $R$ qua trục $x$. Khi đó $\colorbox{#f6f6f6}{P + Q = R'}$.
+
+**Nguyên tắc:** 3 điểm thẳng hàng có tổng bằng $O$:
+
+$$\colorbox{#f6f6f6}{$\displaystyle P + Q + R = O \iff P + Q = -R$}$$
+
+**Các trường hợp đặc biệt:**
+
+- $P = Q$ (nhân đôi): dùng **tiếp tuyến** tại $P$ thay cho đường thẳng $PQ$.
+- $P = -Q$ (đường thẳng đứng, song song trục $y$): không có giao điểm thứ 3 hữu hạn $\implies P + (-P) = O$.
+- $P = O$ hoặc $Q = O$: $P + O = P$.
+
+**Phép nhân vô hướng (Scalar multiplication):** cộng điểm $P$ với chính nó $n$ lần:
+
+$$\colorbox{#f6f6f6}{$\displaystyle nP = \underbrace{P + P + \dots + P}_{n\ \text{lần}}$}$$
+
+### 5. Phép cộng theo đại số (Algebraic Addition)
+
+Cho $P(x_P, y_P)$ và $Q(x_Q, y_Q)$.
+
+**Trường hợp $P \neq Q$ ($x_P \neq x_Q$)** – hệ số góc đường thẳng qua hai điểm:
+
+$$\colorbox{#f6f6f6}{$\displaystyle m = \frac{y_P - y_Q}{x_P - x_Q}$}$$
+
+Giao điểm thứ 3 là $R = (x_R, y_R)$:
+
+$$\colorbox{#f6f6f6}{$\displaystyle x_R = m^2 - x_P - x_Q, \qquad y_R = y_P + m(x_R - x_P)$}$$
+
+Do $P + Q = -R$, kết quả của phép cộng là:
+
+$$\colorbox{#f6f6f6}{$\displaystyle P + Q = (x_R,\ -y_R)$}$$
+
+**Trường hợp $P = Q$ (nhân đôi)** – dùng đạo hàm làm hệ số góc tiếp tuyến:
+
+$$\colorbox{#f6f6f6}{$\displaystyle m = \frac{3x_P^2 + a}{2y_P}$}$$
+
+(Đạo hàm của $y = \pm\sqrt{x^3 + ax + b}$ tại $x_P$.) Công thức rút gọn:
+
+$$\colorbox{#f6f6f6}{$\displaystyle x_{2P} = m^2 - 2x_P, \qquad y_{2P} = m(x_P - x_{2P}) - y_P$}$$
+
+> [!tip]
+>- Nếu $y_P = 0$ thì $2P = O$ (tiếp tuyến thẳng đứng).
+>- Nếu $x_P = x_Q$ và $y_P = -y_Q$ thì $P + Q = O$.
+
+
+### 6. Biểu diễn trên trường hữu hạn và điểm ở vô cực
+
+Trong ECC thực tế, ta xét đường cong trên trường hữu hạn nguyên tố $\mathbb{F}_p$ với $p > 3$:
+
+$$E(\mathbb{F}_p): y^2 \equiv x^3 + ax + b \pmod p, \qquad a,b \in \mathbb{F}_p.$$
+
+Tập điểm bao gồm các nghiệm Affine và điểm ở vô cực $O$:
+
+$$E(\mathbb{F}_p)=\{(x,y)\in\mathbb{F}_p^2: y^2\equiv x^3+ax+b\pmod p\}\cup\{O\}.$$
+
+Trong tọa độ xạ ảnh, điểm ở vô cực thường được biểu diễn bởi $[0:1:0]$. Đây là phần tử đơn vị: $P+O=O+P=P$.
+
+> [!attention]
+**Lưu ý khi thực hiện phép chia:** Mọi phép chia trong công thức Affine trên $\mathbb{F}_p$ đều là phép nhân với nghịch đảo modulo $p$. Ví dụ $\frac{u}{v}\pmod p$ được tính bằng $u\cdot v^{-1}\pmod p$, với điều kiện $v\not\equiv0\pmod p$.
+
+---
+
+## II. Tọa độ Jacobian
+>[!note]
+> Mục đích: **giảm chi phí tính toán**.
+
+Tọa độ Affine cần một phép nghịch đảo modulo (rất tốn kém) ở mỗi lần cộng/nhân đôi. Jacobian loại bỏ phép nghịch đảo này, chỉ cần **một lần nghịch đảo ở cuối** để đổi về Affine.
+
+**Định nghĩa:** Điểm Jacobian $(X, Y, Z)$, $Z \neq 0$ biểu diễn điểm Affine:
+
+$$\colorbox{#f6f6f6}{$\displaystyle x = \frac{X}{Z^2}, \qquad y = \frac{Y}{Z^3}$}$$
+
+**Phương trình EC:**
+
+$$\colorbox{#f6f6f6}{$\displaystyle Y^2 = X^3 + a\,X Z^4 + b\,Z^6$}$$
+
+**Tính chất:**
+
+- Một điểm có nhiều biểu diễn: $(X, Y, Z) \sim (\lambda^2 X, \lambda^3 Y, \lambda Z),\ \forall \lambda \neq 0$.
+- Điểm vô cùng $O$: mọi $(\lambda^2, \lambda^3, 0)$, thường viết $(1 : 1 : 0)$.
+- Affine → Jacobian: $(x, y) \mapsto (x, y, 1)$.
+- Nghịch đảo: $-(X, Y, Z) = (X, -Y, Z)$.
+
+### Công thức nhân đôi $2P$, với $P = (X_1, Y_1, Z_1)$
+
+Ta có:
+$$\colorbox{#f6f6f6}{$\displaystyle \begin{aligned}
+S &= 4X_1Y_1^2 \\
+M &= 3X_1^2 + aZ_1^4 \\
+X_3 &= M^2 - 2S \\
+Y_3 &= M(S - X_3) - 8Y_1^4 \\
+Z_3 &= 2Y_1Z_1
+\end{aligned}$}$$
+
+### Công thức cộng $P_1 + P_2$, với $P_i = (X_i, Y_i, Z_i)$
+Ta có:
+$$\colorbox{#f6f6f6}{$\displaystyle \begin{aligned}
+U_1 &= X_1Z_2^2, & U_2 &= X_2Z_1^2 \\
+S_1 &= Y_1Z_2^3, & S_2 &= Y_2Z_1^3 \\
+H &= U_2 - U_1, & R &= S_2 - S_1 \\
+X_3 &= R^2 - H^3 - 2U_1H^2 \\
+Y_3 &= R(U_1H^2 - X_3) - S_1H^3 \\
+Z_3 &= H\,Z_1Z_2
+\end{aligned}$}$$
+
+>[!tip]
+>**Xử lý trường hợp đặc biệt:**
+>- $H = 0$ và $R = 0 \implies$ hai điểm trùng nhau $\implies$ dùng công thức nhân đôi.
+>- $H = 0$ và $R \neq 0 \implies P_2 = -P_1 \implies$ kết quả là $O$.
+
+---
+
+## III. Áp dụng EC vào ECC
+
+Trong ECC, đường cong được xét trên **trường hữu hạn $\mathbb{F}_p$** ($p$ nguyên tố, $p > 3$). Khi đó:
+
+- Mọi phép tính đều **mod p**.
+- Phép chia = nhân với nghịch đảo modulo: $a / b \equiv a \cdot b^{-1} \pmod p$.
+- Điểm nghịch đảo: $-P = (x,\ p - y)$ (nếu $y = 0$ thì $-P = P$).
+- Đường cong trở thành **tập các điểm rời rạc**, không còn là nét liền. Các công thức đại số vẫn đúng, còn hình ảnh "đường thẳng cắt đường cong" chỉ còn mang tính minh họa.
+
+### 1. Các khái niệm nền tảng
+
+- **Bậc của điểm (order):** số nguyên dương $n$ nhỏ nhất sao cho $\colorbox{#F6F6F6}{nP = O}$
+- **Điểm gốc (generator / base point) $G$:** sinh ra nhóm con cyclic bậc $n$ (thường chọn $n$ là số nguyên tố).
+- **Số điểm của đường cong:**  $\colorbox{#F6F6F6}{\#E}$ (tính cả $O$).
+- **Cofactor:**  $\colorbox{#F6F6F6}{h = \#E / n}$.
+- **Double-and-add:** tính $nP$ trong $O(\log n)$ phép toán thay vì cộng $n$ lần.
+
+### 2. Định lý Hasse
+
+Với đường cong elliptic $E$ trên $\mathbb{F}_p$, số điểm (tính cả $O$) là:
+
+$$\colorbox{#f6f6f6}{$\displaystyle \#E(\mathbb{F}_p) = p + 1 - t, \qquad |t| \le 2\sqrt{p}$}$$
+
+Tương đương: $\left|\#E - (p+1)\right| \le 2\sqrt{p}$. 
+Trong đó $t$ là **vết Frobenius** (trace of Frobenius).
+
+**Ý nghĩa:**
+
+- Ước lượng kích thước nhóm: $\#E \approx p$, nên đường cong trên $\mathbb{F}_p$ 256-bit có nhóm cỡ 256-bit.
+- Để biết $\#E$ cần tính chính xác $t$: **thuật toán Schoof** (và bản cải tiến **SEA** – Schoof–Elkies–Atkin) tính $t$ trong thời gian đa thức.
+- **Chọn đường cong an toàn:** cần $\#E$ có một ước nguyên tố $n$ rất lớn (và cofactor $h$ nhỏ). Muốn kiểm tra điều này phải tính được $\#E$.
+
+
+### 2.1. Xác định chính xác cấp nhóm $\#E(\mathbb{F}_p)$
+
+- **Đường cong chuẩn có trường lớn:** thuật toán Schoof và biến thể Schoof–Elkies–Atkin (SEA) được dùng để xác định chính xác số điểm; đây là các thuật toán thời gian đa thức theo kích thước biểu diễn của $p$.
+- **Toy curve với $p$ nhỏ:** có thể quét từng $x\in\{0,1,\ldots,p-1\}$, đặt $z=x^3+ax+b\pmod p$, rồi dùng ký hiệu Legendre để đếm số nghiệm $y$. Công thức tổng quát là:
+
+$$\#E(\mathbb{F}_p)=1+p+\sum_{x\in\mathbb{F}_p}\left(\frac{x^3+ax+b}{p}\right).$$
+
+Ở đây số $1$ là điểm vô cực; ký hiệu Legendre nhận giá trị $0$ khi $z=0$, $1$ khi $z$ là thặng dư bậc hai khác $0$, và $-1$ khi $z$ là bất thặng dư.
+
+### 2.2. Các cấu trúc nhóm cần loại trừ khi chọn đường cong
+
+- **Đường cong anomalous:** nếu $\#E(\mathbb{F}_p)=p$ (trace Frobenius $t=1$), ECDLP có thể bị phá bởi các biến thể tấn công Smart/Satoh–Araki. Vì vậy, đây là cấu trúc cần loại trừ khi chọn tham số.
+- **Đường cong supersingular:** với trường nguyên tố có $p>3$, điều kiện supersingular tương ứng $p\mid t$ và trong phạm vi này dẫn đến $t=0$, tức $\#E(\mathbb{F}_p)=p+1$. Các đường cong này có thể có embedding degree nhỏ, khiến ECDLP bị chuyển sang DLP trên trường mở rộng qua MOV/Frey–Rück. Cần đánh giá embedding degree của nhóm con cụ thể.
+
+> [!note]
+Đây là các kiểm tra lựa chọn tham số ở cấp đường cong; chúng khác với kiểm tra điểm công khai nhận được từ bên ngoài.
+
+### 3. Cofactor
+
+**Nền tảng: định lý Lagrange.** 
+Điểm $G$ sinh ra nhóm con cyclic kích thước $n$ ($n$ chính là bậc của $G$). Theo Lagrange, kích thước nhóm con luôn chia hết kích thước nhóm lớn:
+
+$$\colorbox{#f6f6f6}{$\displaystyle n \mid \#E$}$$
+
+**Định nghĩa:**
+
+$$\colorbox{#f6f6f6}{$\displaystyle h = \frac{\#E}{n}$}$$
+
+Cofactor cho biết nhóm điểm của đường cong lớn gấp bao nhiêu lần nhóm con do $G$ sinh ra.
+
+**Ví dụ:** Nếu $\#E = 24$ và chọn $G$ có bậc $n = 3$ thì $h = 8$. Nhóm lớn có 24 điểm nhưng $G$ chỉ sinh ra 3 điểm.
+
+**Ý nghĩa bảo mật:** 
+khi $h > 1$, nhóm lớn chứa các nhóm con nhỏ ngoài nhóm con của $G$. Kẻ tấn công có thể gửi một điểm nằm trong nhóm con nhỏ đó (**small-subgroup attack**). Vì bậc của điểm này nhỏ nên bài toán logarit rời rạc trong nhóm con đó giải được dễ dàng, qua đó **rò rỉ thông tin về khóa bí mật** (cụ thể là $d \bmod$ (bậc nhóm con nhỏ), không phải toàn bộ khóa; nhiều lần thử với các nhóm con khác nhau có thể ghép lại bằng CRT).
+
+**Biện pháp phòng chống:**
+
+- Kiểm tra điểm nhận được **nằm trên đường cong** (chống invalid-curve attack) và **thuộc nhóm con bậc $n$** (kiểm tra $nQ = O$).
+- Nhân với cofactor (cofactor clearing): dùng $hd$ hoặc $h \cdot Q$ trong ECDH. Curve25519 dùng kỹ thuật "clamping" để khóa bí mật luôn là bội của 8.
+
+**Cofactor của một số đường cong thông dụng:**
+
+| Đường cong | Cofactor $h$ |
+|---|---|
+| secp256k1 | 1 |
+| NIST P-256 | 1 |
+| Curve25519 / Ed25519 | 8 |
+| Ed448 | 4 |
+
+
+**Phân biệt nhóm đường cong và nhóm con:** 
+Nhóm đầy đủ có $\#E=hn$ điểm, còn $\langle G\rangle$ chỉ có $n$ điểm. Nếu $h=1$ và $n$ nguyên tố thì mọi điểm khác $O$ trên đường cong đều có bậc $n$. Khi $h>1$, nhóm đầy đủ có thể chứa các điểm thuộc nhóm con nhỏ.
+
+Với Ed25519, cấp nhóm con lớn thường được ký hiệu $\ell$:
+
+$$\ell=2^{252}+27742317777372353535851937790883648493.$$
+
+**Ví dụ toy curve bổ sung:** xét $E(\mathbb{F}_{97}):y^2\equiv x^3+2x+3\pmod{97}$. Với $p=97,a=2,b=3$, ta có
+
+$$4a^3+27b^2=4\cdot 2^3+27\cdot 3^2=275\equiv81\not\equiv0\pmod{97},$$
+
+cho nên đường cong không suy biến. Đếm được 99 điểm Affine, cộng thêm $O$ nên $\#E=100=2^2\cdot5^2$. Kiểm tra Hasse: $|100-(97+1)|=2\le2\sqrt{97}$.
+
+| Điểm cơ sở | $n=\operatorname{ord}(G)$ | $h=100/n$ | Phân tích $n$ | Vai trò minh họa |
+|---|:-:|:-:|:-:|---|
+| $G_1=(3,6)$ | 5 | 20 | $5$ | Nhóm con nhỏ để kiểm thử generic search |
+| $G_2=(0,10)$ | 50 | 2 | $2\cdot5^2$ | Minh họa Pohlig–Hellman |
+
+Trên cùng một đường cong có thể chọn các điểm cơ sở với bậc khác nhau, từ đó tạo ra $n$ và $h$ khác nhau. Với $n=50$, thừa số nguyên tố lớn nhất chỉ là $5$, nên Pohlig–Hellman làm bài toán nhỏ hơn nhiều so với việc dùng generic search trên cả nhóm cấp 50.
+
+### 4. Thuật toán Double-and-Add
+
+Biểu diễn $n$ ở dạng nhị phân và dùng nhân đôi và cộng thay cho cộng lặp.
+
+**Ví dụ:** $13 = 1101_2 = 8 + 4 + 1$
+
+$$\colorbox{#f6f6f6}{$\displaystyle 13P = 8P + 4P + P$}$$
+
+Chỉ cần tính $P \to 2P \to 4P \to 8P$ (3 lần nhân đôi), rồi cộng 2 lần, tổng cộng 5 phép toán thay vì 12 phép cộng.
+
+**Độ phức tạp:** khoảng $\log_2 n$ phép nhân đôi và (trung bình) $\tfrac{1}{2}\log_2 n$ phép cộng.
+
+**Lưu ý triển khai:** double-and-add thông thường có thời gian chạy phụ thuộc vào các bit của khóa → dễ bị tấn công kênh kề (timing / power analysis). Thực tế dùng **Montgomery ladder** hoặc các thuật toán constant-time.
+
+
+**So sánh các cách nhân vô hướng thường gặp:**
+
+| Thuật toán | Số lần nhân đôi (ước lượng) | Số lần cộng (ước lượng) | Điểm cần lưu ý về side-channel |
+|---|:--:|:--:|---|
+| Double-and-Add | $\lfloor\log_2d\rfloor$ | $\operatorname{HW}(d)-1$ | Nhánh điều kiện và số phép cộng phụ thuộc bit của khóa |
+| NAF | $\lfloor\log_2d\rfloor$ | Xấp xỉ $\frac13\log_2d$ | Thưa phép cộng hơn nhưng vẫn cần kiểm soát truy cập phụ thuộc scalar |
+| wNAF | $\lfloor\log_2d\rfloor$ | Xấp xỉ $\frac{1}{w+1}\log_2d$ | Bảng tiền tính có thể làm lộ truy cập qua cache |
+| Montgomery Ladder | Xấp xỉ một vòng cố định cho mỗi bit | Mẫu thao tác cố định theo bit-length | Chỉ có lợi khi conditional swap và phép toán nền được triển khai constant-time |
+| Scalar blinding | Phụ thuộc scalar đã làm mù | Có thêm chi phí | Dùng $[d+rn]G=[d]G$ với $r$ ngẫu nhiên để làm ngẫu nhiên biểu diễn scalar |
+
+**Ví dụ:** Double-and-Add MSB-first với $d=(d_{m-1}\ldots d_0)_2$ và bit cao nhất bằng 1:
+
+```text
+R ← G
+for i = m-2, m-3, ..., 0:
+    R ← 2R
+    if d_i = 1:
+        R ← R + G
+return R
 ```
 
-Cho hai điểm hữu hạn $P = (x_1, y_1)$ và $Q = (x_2, y_2)$:
+Với $d=13=(1101)_2$, bắt đầu từ $R=G$, lần lượt nhận $2G$, $3G$, $6G$, $12G$, rồi $13G$. Tổng cộng 3 phép nhân đôi và 2 phép cộng. Nhánh `if d_i == 1` làm số phép cộng phụ thuộc vào khóa. <br>
+Trong môi trường có thể đo thời gian, điện năng hoặc EM, đây là nguy cơ rò rỉ. Vì vậy, với scalar bí mật cần dùng triển khai constant-time đã được kiểm chứng.
 
-1. **Phần tử nghịch đảo:**
-   $$-(x_1, y_1) = (x_1, -y_1 \bmod p) = (x_1, p - y_1)$$
-   Nếu $x_1 = x_2$ và $y_1 \equiv -y_2 \pmod{p}$, thì:
-   $$P + Q = \mathcal{O}$$
+### 5. Ví dụ minh họa nhỏ
 
-2. **Cộng hai điểm phân biệt ($P \neq \pm Q$):**
-   Hệ số góc của cát tuyến nối $P$ và $Q$:
-   $$\lambda = \frac{y_2 - y_1}{x_2 - x_1} \pmod{p}$$
-   Tọa độ điểm tổng $R(x_3, y_3) = P + Q$:
-   $$x_3 = \lambda^2 - x_1 - x_2 \pmod{p}$$
-   $$y_3 = \lambda(x_1 - x_3) - y_1 \pmod{p}$$
+Cho đường cong $E: y^2 = x^3 + 2x + 2$ trên $\mathbb{F}_{17}$, điểm gốc $G = (5, 1)$.
 
-3. **Nhân đôi điểm ($P = Q$ với $y_1 \not\equiv 0$):**
-   Hệ số góc của tiếp tuyến tại $P$:
-   $$\lambda = \frac{3x_1^2 + a}{2y_1} \pmod{p}$$
-   Tọa độ điểm nhân đôi $2P = (x_3, y_3)$:
-   $$x_3 = \lambda^2 - 2x_1 \pmod{p}$$
-   $$y_3 = \lambda(x_1 - x_3) - y_1 \pmod{p}$$
+- $\#E = 19$ (thỏa Hasse: $|19 - 18| = 1 \le 2\sqrt{17} \approx 8.25$).
+- 19 là số nguyên tố → mọi điểm khác $O$ đều có bậc $n = 19$ → $h = 19/19 = 1$.
 
-> [!IMPORTANT]
-> **Điểm mấu chốt kiến trúc mật mã (Nền tảng của Track D — Invalid Curve Attack):**
-> Nhìn vào các công thức trên, hệ số góc $\lambda$ và tọa độ $(x_3, y_3)$ chỉ phụ thuộc vào $a$, $x_1, y_1, x_2, y_2$ mà **hoàn toàn không chứa tham số $b$**. 
-> Một điểm $P' = (x', y')$ thuộc một đường cong sai lệch:
-> 
-> $$E': y^2 \equiv x^3 + ax + b' \pmod{p} \quad (b' \neq b)$$
-> 
-> khi đưa vào hàm nhân vô hướng của thư viện không validate điểm sẽ vẫn thực hiện phép cộng trơn tru mà không vấp phải bất kỳ ngoại lệ số học nào.
+**Tính $2G$:**
 
----
+$$m = \frac{3 \cdot 5^2 + 2}{2 \cdot 1} = 77 \cdot 2^{-1} \equiv 9 \cdot 9 = 81 \equiv 13 \pmod{17}$$
+$$x_{2G} = 13^2 - 2\cdot 5 = 159 \equiv 6, \qquad y_{2G} = 13(5 - 6) - 1 = -14 \equiv 3$$
 
-## 2. Cấp của Nhóm Điểm $\#E$ và Định Lý Hasse
+→ $2G = (6, 3)$.
 
-### 2.1 Định lý Hasse (Hasse's Theorem)
-Cấp của nhóm điểm $\#E(\mathbb{F}_p)$ (tổng số nghiệm hữu tỉ bao gồm $\mathcal{O}$) bị giới hạn chặt chẽ quanh giá trị $p + 1$:
+**Bảng các bội của $G$:**
 
-$$\left| \#E(\mathbb{F}_p) - (p + 1) \right| \le 2\sqrt{p}$$
+| $k$ | $kG$ | $k$ | $kG$ | $k$ | $kG$ |
+|---|---|---|---|---|---|
+| 1 | (5, 1) | 7 | (0, 6) | 13 | (16, 4) |
+| 2 | (6, 3) | 8 | (13, 7) | 14 | (9, 1) |
+| 3 | (10, 6) | 9 | (7, 6) | 15 | (3, 16) |
+| 4 | (3, 1) | 10 | (7, 11) | 16 | (10, 11) |
+| 5 | (9, 16) | 11 | (13, 10) | 17 | (6, 14) |
+| 6 | (16, 13) | 12 | (0, 11) | 18 | (5, 16) |
 
-Đại lượng sai phân $t = p + 1 - \#E(\mathbb{F}_p)$ được gọi là **vết của Frobenius (Trace of Frobenius)**, thỏa mãn:
-
-$$-2\sqrt{p} \le t \le 2\sqrt{p} \iff p + 1 - 2\sqrt{p} \le \#E(\mathbb{F}_p) \le p + 1 + 2\sqrt{p}$$
-
-### 2.2 Thuật toán xác định cấp nhóm
-- **Đường cong chuẩn công nghiệp (256–521 bit):** Cấp $\#E$ được tính toán thông qua thuật toán Schoof hoặc biến thể Schoof–Elkies–Atkin (SEA) với độ phức tạp đa thức $\widetilde{\mathcal{O}}(\log^4 p)$.
-- **Đường cong mô phỏng (Toy Curve, $p$ nhỏ):** Cấp $\#E$ có thể đếm chính xác bằng cách quét $x \in [0, p-1]$, kiểm tra xem $z = x^3 + ax + b \pmod{p}$ có phải thặng dư bậc hai (Euler's criterion $z^{(p-1)/2} \equiv 1$) và tính tổng số nghiệm:
-  $$\#E(\mathbb{F}_p) = 1 + p + \sum_{x \in \mathbb{F}_p} \left(\frac{x^3 + ax + b}{p}\right)$$
-
-### 2.3 Phân loại các cấu trúc cấp đặc biệt nguy hiểm
-- **Đường cong Anomalous:** $\#E(\mathbb{F}_p) = p$ (tức vết $t = 1$). Bị phá vỡ hoàn toàn bởi tấn công Smart / Semaev / Satoh–Araki. Tấn công này nhúng nhóm $E(\mathbb{F}_p)$ vào nhóm cộng $p$-adic $\mathbb{Q}_p$, chuyển ECDLP thành phép chia số học thời gian đa thức $\mathcal{O}(\log^3 p)$.
-- **Đường cong Supersingular:** $\operatorname{char}(\mathbb{F}_p) \mid t$. Với $p > 3$, điều này tương đương $t = 0 \implies \#E(\mathbb{F}_p) = p + 1$. Nhóm có bậc nhúng (embedding degree) nhỏ $k \le 6$, cho phép tấn công rút gọn MOV (Menezes–Okamoto–Vanstone) hoặc Frey–Rück chuyển bài toán ECDLP sang DLP trên trường mở rộng $\mathbb{F}_{p^k}^\times$, giải được bằng Index Calculus.
+Và $19G = O$. Ta thấy $18G = (5, 16) = -G$ vì $16 = 17 - 1$, đúng với quy tắc $-P = (x, p - y)$.
 
 ---
 
-## 3. Bậc Điểm, Subgroup Order $n$ và Cofactor $h$
+## IV. Bài toán Logarit rời rạc trên EC (ECDLP)
 
-### 3.1 Định nghĩa và Định lý Lagrange
-- **Bậc của điểm $P$:** Ký hiệu $\operatorname{ord}(P)$, là số nguyên dương $m$ nhỏ nhất thỏa mãn:
-  $$[m]P = \underbrace{P + P + \dots + P}_{m \text{ lần}} = \mathcal{O}$$
-- Theo **Định lý Lagrange** cho nhóm hữu hạn:
-  $$\forall P \in E(\mathbb{F}_p): \quad \operatorname{ord}(P) \mid \#E(\mathbb{F}_p)$$
+Cho hai điểm $G$ và $Q$ với quan hệ:
 
-### 3.2 Nhóm con Cyclic chính và Cofactor
-Trong các ứng dụng mật mã, hệ thống chọn một điểm cơ sở chuẩn $G \in E(\mathbb{F}_p)$ (Base Point / Generator) sinh ra một nhóm con cyclic $\langle G \rangle$:
+$$\colorbox{#f6f6f6}{$\displaystyle Q = dG$}$$
 
-$$\langle G \rangle = \{ [k]G : k \in \{0, 1, \dots, n - 1\} \} \cong \mathbb{Z}/n\mathbb{Z}$$
+- **Công khai:** đường cong, điểm gốc $G$ (cùng $n$, $h$), và $Q = dG$ (khóa công khai).
+- **Khóa bí mật:** số nguyên $$\colorbox{#f6f6f6}{$\displaystyle d \in [1, n-1]$}$$
 
-Khi đó:
-- **Cấp nhóm con (Subgroup Order):** $n = \operatorname{ord}(G)$ (phải là số nguyên tố lớn).
-- **Thừa số đồng hành (Cofactor):** Tỉ số giữa tổng số điểm và cấp nhóm con:
-  $$h = \frac{\#E(\mathbb{F}_p)}{n} \in \mathbb{Z}^+ \implies \#E(\mathbb{F}_p) = h \cdot n$$
+Tính $Q$ từ $d$ rất nhanh (double-and-add), nhưng tìm $d$ từ $G$ và $Q$ là bài toán **ECDLP** – chưa có thuật toán hiệu quả.
 
-```mermaid
-classDiagram
-    class FullCurveGroup {
-        #E(𝔽_p) = h · n điểm
-        Bậc mọi điểm chia hết #E
-    }
-    class CryptographicSubgroup {
-        ⟨G⟩ gồm n điểm (n nguyên tố lớn)
-        Mọi điểm P ≠ 𝒪 đều có bậc n
-        Khóa công khai Q = [d]G ∈ ⟨G⟩
-    }
-    class SmallSubgroups {
-        Các điểm bậc nhỏ r_i chia hết h
-        Nguy cơ Small-Subgroup Confinement
-    }
-    FullCurveGroup o-- CryptographicSubgroup : chứa
-    FullCurveGroup o-- SmallSubgroups : chứa (khi h > 1)
-```
+**Độ khó:**
 
-### 3.3 Phân loại Cofactor trong các chuẩn thực tế
-1. **Prime-order Curves ($h = 1$):**
-   - Tiêu biểu: NIST P-256, P-384, P-521, SECG secp256k1.
-   - Đặc tính: Toàn bộ đường cong là nhóm cyclic cấp nguyên tố $n = \#E$.
-   - Ý nghĩa an ninh: Mọi điểm $P \in E(\mathbb{F}_p) \setminus \{\mathcal{O}\}$ đều tự động có bậc $n$. Không tồn tại nhóm con bậc nhỏ không tầm thường.
-2. **Composite-order Curves ($h > 1$):**
-   - Tiêu biểu: Curve25519 / Ed25519 ($h = 8$, RFC 7748, RFC 8032), Curve448 / Ed448 ($h = 4$).
-   - Ví dụ bậc nhóm của Ed25519:
-     $$\ell = 2^{252} + 27742317777372353535851937790883648493$$
-   - Ý nghĩa an ninh: Tồn tại các điểm bậc $2, 4, 8$. Nếu giao thức ECDH không thực hiện **cofactor clearing** (tính $[h \cdot d]P$) hoặc kiểm tra tích $[n]P = \mathcal{O}$, đối phương có thể gửi điểm bậc nhỏ để rò rỉ $d \pmod 8$.
+- Thuật toán tấn công tổng quát tốt nhất (**Pollard's rho**) tốn khoảng $\sqrt{n}$ phép toán (chính xác hơn là $\approx \sqrt{\pi n / 4}$).
+- Đường cong 256-bit ($n \approx 2^{256}$) cho mức an toàn khoảng **128-bit**.
+- Do **Pohlig–Hellman**, ECDLP chỉ khó bằng ước nguyên tố lớn nhất của bậc nhóm, vì vậy $n$ phải là số nguyên tố lớn.
+- Máy tính lượng tử chạy thuật toán Shor có thể giải ECDLP trong thời gian đa thức, nên ECC không an toàn trước máy tính lượng tử quy mô lớn.
 
----
 
-### 3.4 Minh họa thực nghiệm trên Toy Curve (Đã kiểm chứng toán học)
+### 1. Các thuật toán giải ECDLP và work factor
 
-Xét đường cong $E(\mathbb{F}_{97})$:
-$$y^2 \equiv x^3 + 2x + 3 \pmod{97}$$
+Cho $Q=[d]G$ trong nhóm con cấp $n$. Các thuật toán quan trọng có chi phí khác nhau về thời gian và bộ nhớ:
 
-- **Tham số:** $p = 97$, $a = 2$, $b = 3$.
-- **Biệt thức:**
-  $$\Delta = -16(4(2)^3 + 27(3)^2) = -16(32 + 243) = -16(275) \equiv -16(81) \equiv -1296 \equiv 62 \not\equiv 0 \pmod{97}$$
-  *(Hoặc tính rút gọn: $4a^3 + 27b^2 = 275 \equiv 81 \not\equiv 0 \pmod{97}$)* $\implies$ Đường cong trơn hoàn toàn.
-- **Tổng số nghiệm Affine:** Có 99 cặp $(x, y) \in \mathbb{F}_{97}^2$ thỏa mãn phương trình.
-- **Cấp nhóm điểm:**
-  $$\#E(\mathbb{F}_{97}) = 99 + 1 = 100 = 2^2 \cdot 5^2$$
-- **Kiểm tra Hasse:**
-  $$|100 - (97 + 1)| = |100 - 98| = 2 \le 2\sqrt{97} \approx 19.697 \quad \text{(Thỏa mãn)}$$
+#### A. Exhaustive Search (Brute forces)
 
-| Điểm cơ sở được chọn | Cấp nhóm con $n = \operatorname{ord}(G)$ | Cofactor $h = 100/n$ | Cấu trúc phân tích thừa số của $n$ | Ý nghĩa trong kiểm thử bảo mật |
-| :--- | :---: | :---: | :---: | :--- |
-| **$G_1 = (3, 6)$** | **$5$** | **$20$** | $5$ (nguyên tố nhỏ) | Nhóm con đồ chơi, dùng test generic search |
-| **$G_2 = (0, 10)$** | **$50$** | **$2$** | $2 \cdot 5^2$ (**Smooth Order**) | **Mẫu Unsafe Order cho Track B (Pohlig–Hellman)** |
+Thử lần lượt $j=1,2,\ldots$ và so sánh $[j]G$ với $Q$. Chi phí kỳ vọng xấp xỉ $n/2$ phép thử, trường hợp xấu nhất $O(n)$ và bộ nhớ $O(1)$. Đây không phải baseline generic tốt nhất khi $n$ lớn.
 
-> [!TIP]
-> **Nhận xét quan trọng:** Trên cùng một đường cong đại số $E$, việc lựa chọn điểm cơ sở $G$ khác nhau quyết định trực tiếp cấp $n$ và cofactor $h$. Điểm $G_2 = (0, 10)$ có cấp $n = 50$ là số trơn (ước nguyên tố lớn nhất $q_{\max} = 5$). Kẻ tấn công dùng Pohlig–Hellman chỉ mất chi phí $\approx \mathcal{O}(\sqrt{5})$ phép tính thay vì $\mathcal{O}(\sqrt{50})$.
+#### B. Baby-Step Giant-Step (BSGS)
+
+Đặt $m=\lceil\sqrt n\rceil$ và viết $d=im+j$, với $0\le i,j<m$. Từ
+
+$$Q-[i m]G=[j]G,$$
+
+- **Baby steps:** lưu bảng băm các điểm $[j]G$ với $0\le j<m$.
+- **Giant steps:** lần lượt tính $Q-[i](mG)$ và tra trong bảng. Khi trùng khớp, khôi phục $d=im+j$.
+
+Độ phức tạp thời gian và bộ nhớ đều là $O(\sqrt n)$.
+
+#### C. Pollard's rho
+
+Pollard's rho tạo một hành trình giả ngẫu nhiên trong nhóm và biểu diễn mỗi điểm dưới dạng $R_k=[a_k]G+[b_k]Q$. Khi tìm được va chạm $R_u=R_v$ với hệ số thích hợp, ta có:
+
+$$ (b_u-b_v)d\equiv a_v-a_u\pmod n, $$
+
+$$ d\equiv(a_v-a_u)(b_u-b_v)^{-1}\pmod n. $$
+
+Chi phí kỳ vọng là $O(\sqrt n)$ phép toán nhóm. Có thể dùng thuật toán phát hiện chu trình hoặc distinguished points để giảm bộ nhớ và hỗ trợ song song hóa. Hằng số trước $\sqrt n$ phụ thuộc mô hình bước đi và cách đếm phép toán. 
+Do đó nên so sánh các triển khai bằng cùng metric thay vì trộn các hằng số lý thuyết khác quy ước.
+
+#### D. Pohlig–Hellman (bậc hợp số trơn)
+
+Nếu
+
+$$n=\prod_{i=1}^{k}q_i^{e_i},$$
+
+Pohlig–Hellman chia bài toán thành các bài toán con modulo $q_i^{e_i}$, giải từng phần bằng **BSGS/Pollard rho** hoặc các kỹ thuật tương ứng, rồi ghép các kết quả bằng **Định lý Số dư Trung Hoa (CRT)**:
+
+$$d\equiv d_i\pmod{q_i^{e_i}}.$$
+
+Với $M_i=n/q_i^{e_i}$, nghiệm CRT có dạng
+
+$$d\equiv\sum_{i=1}^{k}d_iM_i(M_i^{-1}\bmod q_i^{e_i})\pmod n.$$
+
+Chi phí bị chi phối bởi các ước nguyên tố lớn nhất, thường được tóm tắt theo $O(\sum_i e_i\sqrt{q_i})$ trong mô hình sử dụng thuật toán generic cho các nhóm con.
+Đặt $q_{\max}=\max_i q_i$, tham số có $q_{\max}$ nhỏ sẽ làm ECDLP yếu dù $n$ có thể lớn.
+
+**Mức an toàn generic:** nếu $n$ xấp xỉ $2^{256}$ và không có cấu trúc yếu khác, Pollard rho cần cỡ $2^{128}$ phép toán nhóm, tương ứng mục tiêu an toàn khoảng 128-bit. Máy tính lượng tử đủ quy mô với thuật toán Shor có thể giải ECDLP trong thời gian đa thức, nên ECC cổ điển không kháng được mô hình lượng tử quy mô lớn.
 
 ---
 
-## 4. Phép Nhân Vô Hướng (Scalar Multiplication) $Q = [d]G$
+## V. 10 tiêu chí cấu trúc tham số an toàn (Domain Parameters)
 
-Phép nhân vô hướng là phép toán hạt nhân của mọi giao thức ECC:
-$$[d]G = \underbrace{G + G + \dots + G}_{d \text{ lần}}$$
-với $d \in \mathbb{Z}_n^* = \{1, 2, \dots, n-1\}$.
+Bảng dưới đây tổng hợp các kiểm tra quan trọng khi lựa chọn hoặc nạp domain parameters. Một vài phép kiểm tra (chẳng hạn kiểm tra nguyên tố xác suất) cần được hiểu theo đúng mức bảo đảm của thuật toán; với hệ thống sản phẩm nên dùng thư viện và bộ tham số chuẩn đã được kiểm chứng.
 
-### 4.1 Bảng so sánh các giải thuật nhân vô hướng
+| # | Hạng mục | Điều kiện / tiêu chí | Cách kiểm tra | Rủi ro nếu thất bại |
+|:--:|---|---|---|---|
+| 1 | Đường cong không suy biến | $\Delta=-16(4a^3+27b^2)\not\equiv0\pmod p$ | Tính modulo $p$ | Đường cong kỳ dị, cấu trúc nhóm không còn là elliptic curve thông thường |
+| 2 | Trường nền hợp lệ | $p$ nguyên tố, $p>3$ | Dùng kiểm tra nguyên tố phù hợp; phân biệt probable-prime với chứng minh nguyên tố | Phép tính trường không đúng |
+| 3 | Điểm cơ sở nằm trên đường cong | $y_G^2\equiv x_G^3+ax_G+b\pmod p$ | Thay tọa độ vào phương trình | Điểm cơ sở không hợp lệ |
+| 4 | Cấp điểm cơ sở đúng | $G\ne O$ và $[n]G=O$; xác minh $n$ là cấp chính xác theo phân tích các ước của $n$ | Nhân vô hướng và kiểm tra các ước nguyên tố của $n$ | Giả định sai về nhóm con |
+| 5 | Cấp nhóm con đủ lớn, khó phân tích | $n$ nguyên tố lớn hoặc có ước nguyên tố lớn đủ mạnh | Kiểm tra nguyên tố / phân tích thừa số | Pohlig–Hellman làm giảm độ khó theo ước nguyên tố lớn nhất |
+| 6 | Không anomalous | $\#E(\mathbb F_p)\ne p$ | Đối chiếu trace / cấp nhóm | Smart-type attack |
+| 7 | Embedding degree đủ lớn | Đánh giá số nhỏ nhất $k$ sao cho $n\mid(p^k-1)$ | Tính embedding degree theo $n,p$ và mức an toàn mục tiêu | MOV/Frey–Rück đưa bài toán sang trường mở rộng |
+| 8 | Cofactor được kiểm soát | $h=\#E/n$ nhỏ và được giao thức xử lý đúng | Tính chính xác $h$ | Small-subgroup / invalid-subgroup issues |
+| 9 | Twist security | Kiểm tra cấp của quadratic twist có ước nguyên tố lớn phù hợp | Phân tích twist theo mô hình đường cong | Twist/small-subgroup attack, đặc biệt với thiết kế x-only |
+| 10 | Nguồn gốc tham số rõ ràng | Dùng tham số chuẩn hóa hoặc quy trình sinh có thể kiểm toán | Đối chiếu RFC/NIST/SECG và tài liệu sinh tham số | Rủi ro tham số bị lựa chọn có chủ đích hoặc thiếu minh bạch |
 
-| Thuật toán | Số phép nhân đôi (Doubling) | Số phép cộng (Addition) | Tổng chi phí phép toán | Kênh rò rỉ Side-channel (Track F) |
-| :--- | :---: | :---: | :---: | :--- |
-| **Double-and-Add (MSB/LSB)** | $\lfloor \log_2 d \rfloor$ | $\operatorname{HW}(d) - 1$ | $\approx 1.5 \log_2 d$ | **Timing & Branch:** Rò rỉ trọng số Hamming $\operatorname{HW}(d)$ qua thời gian thực thi |
-| **Non-Adjacent Form (NAF)** | $\lfloor \log_2 d \rfloor$ | $\approx \frac{1}{3} \log_2 d$ | $\approx 1.33 \log_2 d$ | **Timing:** Số phép cộng giảm nhưng vẫn phụ thuộc giá trị bit |
-| **Windowed NAF (wNAF)** | $\lfloor \log_2 d \rfloor$ | $\approx \frac{1}{w+1} \log_2 d$ | Phụ thuộc cửa sổ $w$ | **Cache-timing:** Truy cập bảng tiền tính toán (precomputed table) phụ thuộc bí mật |
-| **Montgomery Ladder** | $\lfloor \log_2 d \rfloor$ | $\lfloor \log_2 d \rfloor$ | Cố định $2 \log_2 d$ | **Kháng Timing:** Số phép toán độc lập hoàn toàn với giá trị từng bit của $d$ |
-| **Scalar Blinding** | - | - | Thêm phụ phí nhỏ | **Kháng DPA/CPA:** Tính $[d + r \cdot n]G$ với $r \in_R \mathbb{Z}$ làm ngẫu nhiên hóa biểu diễn |
-
-### 4.2 Thuật toán Double-and-Add (MSB-first)
-```
-Input:  Điểm G ∈ E(𝔽_p), số nguyên d = (d_{m-1} d_{m-2} ... d_1 d_0)₂ với d_{m-1} = 1
-Output: Q = [d]G
-
-1: R ← G
-2: for i from m - 2 down to 0 do:
-3:     R ← [2]R                     // Điểm nhân đôi (Double)
-4:     if d_i == 1 then:
-5:         R ← R + G                // Điểm cộng (Add) - Chỉ thực hiện khi bit bằng 1
-6: return R
-```
-
-**Ví dụ tính toán:** $d = 13 = (1101)_2$:
-$$\begin{aligned}
-\text{Khởi tạo: } & R = G \\
-\text{Bit } 1: & R \leftarrow 2(G) = 2G, \quad \text{bit}=1 \implies R \leftarrow 2G + G = 3G \\
-\text{Bit } 0: & R \leftarrow 2(3G) = 6G, \quad \text{bit}=0 \implies \text{không cộng} \\
-\text{Bit } 1: & R \leftarrow 2(6G) = 12G, \quad \text{bit}=1 \implies R \leftarrow 12G + G = 13G
-\end{aligned}$$
-Tổng cộng: 3 phép nhân đôi và 2 phép cộng điểm.
-
-> [!WARNING]
-> Nếu nhánh `if d_i == 1` được thực thi bởi CPU có tính năng branch prediction hoặc instruction cache, kẻ tấn công đo lường thời gian (cycles) hoặc phân tích EM/năng lượng có thể tái dựng chính xác từng bit của khóa riêng $d$ (hoặc nonce $k$).
+> [!note]
+**Ghi chú:** embedding degree là số nhỏ nhất $k\ge1$ sao cho $n\mid(p^k-1)$ (khi điều kiện tồn tại phù hợp). Không nên coi việc kiểm tra một giới hạn $k$ cố định là bằng chứng độc lập cho toàn bộ độ an toàn và cần đối chiếu chuẩn và kích thước trường mở rộng với mức an toàn yêu cầu.
 
 ---
 
-## 5. Bài Toán Logarithm Rời Rạc (ECDLP) & Đánh Giá Work Factor
+## VI. Validation điểm công khai và Invalid-Curve Attack
 
-### 5.1 Định nghĩa bài toán
-Cho đường cong $E(\mathbb{F}_p)$, điểm cơ sở $G$ có bậc nguyên tố $n$, và điểm công khai $Q \in \langle G \rangle$. **Bài toán Logarithm Rời rạc trên Đường cong Elliptic (ECDLP)** yêu cầu tìm số nguyên duy nhất $d \in \{0, 1, \dots, n-1\}$ sao cho:
+### 1. Nền tảng của Invalid-Curve Attack
 
-$$Q = [d]G$$
+Dựa vào công thức cộng và nhân đôi điểm ở mục I.5, hệ số góc và tọa độ kết quả chỉ dùng $a$ cùng tọa độ các điểm. Vì vậy, nếu một thư viện thực hiện nhân điểm mà không xác minh điểm đầu vào nằm trên đường cong đã cấu hình, một điểm thuộc đường cong khác
 
-### 5.2 Các thuật toán giải ECDLP tổng quát và Work Factor
+$$E': y^2\equiv x^3+ax+b'\pmod p, \qquad b'\ne b$$
 
-```mermaid
-graph LR
-    subgraph Algorithms["Thuật toán giải ECDLP"]
-        BF["Exhaustive Search<br/>W ≈ n"]
-        BSGS["Baby-Step Giant-Step<br/>W ≈ O(√n), Mem ≈ O(√n)"]
-        Rho["Pollard's Rho<br/>W ≈ √(πn/2), Mem ≈ O(1)"]
-        PH["Pohlig-Hellman<br/>W ≈ O(√q_max)"]
-    end
-    BF -->|"Không thực tế"| Baseline["Baseline Generic"]
-    BSGS --> Baseline
-    Rho --> Baseline
-    Baseline -->|"Mức an toàn lý thuyết"| SecLevel["128-bit Security<br/>(với n ≈ 2²⁵⁶)"]
-    PH -->|"Khi n trơn"| Break["Sụp đổ tham số"]
-```
+đôi khi vẫn được xử lý bởi cùng công thức số học. 
+Đây là nền tảng đại số của Invalid-Curve Attack.
 
-#### A. Tìm kiếm vét cạn (Exhaustive Search / Brute Force)
-- Thử lần lượt $d' = 1, 2, \dots$ tính $[d']G$ và so sánh với $Q$.
-- Độ phức tạp thời gian: Kỳ vọng $n/2$ phép thử, trường hợp xấu nhất $\mathcal{O}(n)$.
-- Độ phức tạp bộ nhớ: $\mathcal{O}(1)$.
-- **Khẳng định phương pháp luận:** Vét cạn $\mathcal{O}(n)$ **không phải** là baseline thực tế của an toàn mật mã; kẻ tấn công luôn sử dụng các thuật toán generic $\mathcal{O}(\sqrt{n})$.
+### 2. Quy trình validation điểm công khai
 
-#### B. Baby-Step Giant-Step (Shanks - BSGS)
-- Đặt $m = \lceil \sqrt{n} \rceil$. Biểu diễn khóa bí mật dưới dạng:
-  $$d = i \cdot m + j, \quad 0 \le j < m, \quad 0 \le i < m$$
-- Phương trình $Q = [d]G$ tương đương:
-  $$Q - [i \cdot m]G = [j]G$$
-- **Baby steps:** Tính và lưu bảng băm $\mathcal{T} = \{ [j]G : 0 \le j < m \}$.
-- **Giant steps:** Với mỗi $i = 0, 1, \dots, m-1$, tính $Q - [i](mG)$ và tra cứu trong $\mathcal{T}$. Khi tìm thấy trùng khớp, nghiệm là $d = i \cdot m + j$.
-- Độ phức tạp thời gian: $\mathcal{O}(\sqrt{n})$ phép tính điểm.
-- Độ phức tạp bộ nhớ: $\mathcal{O}(\sqrt{n})$ điểm nhóm.
+Khi nhận điểm $P=(x,y)$ từ đối tác qua ranh giới tin cậy, quy trình kiểm tra thường bao gồm:
 
-#### C. Thuật toán Pollard's Rho
-- Sử dụng hàm bước đi giả ngẫu nhiên $f: \langle G \rangle \to \langle G \rangle$ chia nhóm thành 3 tập con rời nhau $S_1, S_2, S_3$:
-  $$R_{k+1} = \begin{cases} R_k + G & \text{nếu } R_k \in S_1 \\ [2]R_k & \text{nếu } R_k \in S_2 \\ R_k + Q & \text{nếu } R_k \in S_3 \end{cases}$$
-- Biểu diễn mỗi điểm dưới dạng $R_k = [a_k]G + [b_k]Q \pmod n$.
-- Theo nghịch lý ngày sinh (Birthday Paradox), va chạm $R_u = R_v$ xuất hiện sau kỳ vọng:
-  $$W_\rho \approx \sqrt{\frac{\pi n}{2}} \approx 1.2533 \sqrt{n} = \mathcal{O}(\sqrt{n}) \text{ phép cộng điểm}$$
-- Khi va chạm xảy ra với $(a_u, b_u) \not\equiv (a_v, b_v) \pmod n$:
-  $$[a_u]G + [b_u]Q = [a_v]G + [b_v]Q \implies (b_u - b_v) d \equiv (a_v - a_u) \pmod n$$
-  $$d \equiv (a_v - a_u) \cdot (b_u - b_v)^{-1} \pmod n$$
-- Độ phức tạp bộ nhớ: $\mathcal{O}(1)$ khi dùng giải thuật tìm chu trình của Floyd hoặc phương pháp Distinguished Points (cho phép song song hóa tuyến tính).
+1. **Kiểm tra điểm vô cực:** từ chối $P=O$ nếu giao thức không cho phép.
+2. **Kiểm tra miền tọa độ:** xác nhận $0\le x,y<p$ trước khi đưa vào phép tính trường.
+3. **Kiểm tra on-curve:** xác minh $y^2\equiv x^3+ax+b\pmod p$.
+4. **Kiểm tra subgroup:** khi giao thức yêu cầu, xác minh $[n]P=O$ hoặc áp dụng phương án xử lý cofactor đã được giao thức quy định.
+5. **Kiểm tra điều kiện riêng của giao thức:** ví dụ, với một số luồng X25519 dựa trên RFC 7748, ứng dụng có thể cần phát hiện và xử lý shared secret toàn zero theo yêu cầu an toàn của giao thức bao quanh.
 
-#### D. Thuật toán Pohlig–Hellman (Giải quyết bậc hợp số trơn)
-Khi bậc nhóm $n$ phân tích thành tích các thừa số nguyên tố:
-$$n = \prod_{i=1}^k q_i^{e_i}$$
+- Nếu $h=1$ và đường cong có nhóm cyclic cấp nguyên tố, một điểm khác $O$ đã on-curve nằm trong nhóm con mong muốn. 
+- Nếu $h>1$, on-curve không tự động chứng minh subgroup membership. Cofactor clearing $P^*=[h]P$ chỉ nên dùng khi giao thức được thiết kế để làm như vậy.
 
-```mermaid
-flowchart TD
-    Order["n = q₁^{e₁} · q₂^{e₂} · ... · q_k^{e_k}"] --> Decomp["Chiếu lên nhóm con bậc q_i^{e_i}"]
-    Decomp --> SubDLP1["Giải d mod q₁^{e₁}<br/>Chi phí: O(e₁ · √q₁)"]
-    Decomp --> SubDLP2["Giải d mod q₂^{e₂}<br/>Chi phí: O(e₂ · √q₂)"]
-    Decomp --> SubDLPk["Giải d mod q_k^{e_k}<br/>Chi phí: O(e_k · √q_k)"]
-    SubDLP1 --> CRT["Định lý Số Dư Trung Hoa (CRT)"]
-    SubDLP2 --> CRT
-    SubDLPk --> CRT
-    CRT --> RecoverKey["Khôi phục toàn bộ d mod n<br/>Tổng chi phí: O(Σ e_i √q_i)"]
-```
+### 3. Cơ chế đại số của Invalid-Curve Attack
 
-1. Với mỗi ước nguyên tố $q_i$, đặt $G_i = \left[\frac{n}{q_i^{e_i}}\right]G$ và $Q_i = \left[\frac{n}{q_i^{e_i}}\right]Q$. Cả hai điểm đều có bậc $q_i^{e_i}$.
-2. Giải bài toán logarithm trên nhóm con bậc $q_i$ bằng BSGS hoặc Pollard's rho để tìm từng chữ số $q_i$-adic của $d \pmod{q_i^{e_i}}$:
-   $$d \equiv d_i \pmod{q_i^{e_i}}, \quad \forall i \in \{1, 2, \dots, k\}$$
-3. Khôi phục lại $d \pmod n$ duy nhất thông qua Định lý Số dư Trung Hoa (CRT):
-   $$d \equiv \sum_{i=1}^k d_i M_i \left(M_i^{-1} \bmod q_i^{e_i}\right) \pmod n, \quad \text{với } M_i = \frac{n}{q_i^{e_i}}$$
-- **Work factor thực tế:**
-  $$W_{\text{PH}} \approx \sum_{i=1}^k e_i \left( \log_2 n + \sqrt{q_i} \right) \implies W_{\text{eff}} \approx \mathcal{O}\left(\sqrt{q_{\max}}\right), \quad q_{\max} = \max_{1 \le i \le k} q_i$$
+Một lỗi triển khai nghiêm trọng xảy ra khi thư viện nhận tọa độ điểm nhưng không xác minh phương trình đường cong đã cấu hình. Do công thức Affine chỉ sử dụng $a$ và tọa độ điểm, đầu vào thuộc đường cong sai
 
----
+$$E': y^2\equiv x^3+ax+b'\pmod p, \qquad b'\ne b$$
 
-## 6. Checklist 10 Tiêu Chí Cấu Trúc Tham Số An Toàn (Domain Parameters)
+đôi khi vẫn được đưa qua phép nhân vô hướng. Nếu điểm đầu vào $P_i$ có bậc nhỏ $r_i$, kết quả của phép nhân bí mật thỏa
 
-Mọi đường cong elliptic sử dụng trong sản phẩm thương mại hoặc phòng lab an toàn đều phải vượt qua 10 kiểm tra toán học nghiêm ngặt:
+$$[d]P_i=[d\bmod r_i]P_i.$$
 
-| # | Hạng mục kiểm tra | Biểu thức toán học / Điều kiện | Phương pháp thực thi | Nguy cơ bảo mật nếu thất bại |
-| :-: | :--- | :--- | :--- | :--- |
-| **1** | **Biệt thức không suy biến** | $\Delta = -16(4a^3 + 27b^2) \not\equiv 0 \pmod p$ | Tính lũy thừa modular | Đường cong kỳ dị (Cusp/Node), DLP giải trong $\mathcal{O}(1)$ hoặc đa thức |
-| **2** | **Tính nguyên tố của trường** | $p \in \mathbb{P}$, $p > 3$ | Miller–Rabin ($k \ge 64$ vòng) | Số học trường không bảo toàn tính khả nghịch |
-| **3** | **Điểm cơ sở thuộc đường cong** | $y_G^2 \equiv x_G^3 + a x_G + b \pmod p$ | Thay tọa độ vào phương trình | Điểm không hợp lệ, không sinh nhóm điểm |
-| **4** | **Cấp điểm cơ sở hợp lệ** | $[n]G = \mathcal{O}$ và $G \neq \mathcal{O}$ | Nhân vô hướng | $G$ không có cấp $n$ |
-| **5** | **Tính nguyên tố của cấp $n$** | $n \in \mathbb{P}$ (hoặc $q_{\max} \ge 2^{256}$) | Kiểm tra nguyên tố hóa Baillie–PSW / Miller–Rabin | Pohlig–Hellman bẻ gãy ECDLP với chi phí $\mathcal{O}(\sqrt{q_{\max}})$ |
-| **6** | **Kháng tấn công Anomalous** | $\#E(\mathbb{F}_p) \neq p$ (tức vết $t \neq 1$) | So sánh trực tiếp cấp nhóm với $p$ | Smart attack bẻ gãy khóa riêng trong thời gian đa thức $\mathcal{O}(\log^3 p)$ |
-| **7** | **Kháng tấn công MOV / Frey–Rück** | Bậc nhúng $k$ đủ lớn sao cho $n \nmid (p^k - 1)$ với mọi $k \le 100$ | Tính $p^k \pmod n$ | Giảm bài toán ECDLP về DLP trường hữu hạn $\mathbb{F}_{p^k}^\times$ |
-| **8** | **Cofactor nhỏ & kiểm soát** | $h = \frac{\#E}{n} \in \{1, 2, 4, 8\}$ | Phép chia số nguyên | Tấn công Small-subgroup Confinement rò rỉ $d \pmod h$ |
-| **9** | **Twist Security (An toàn đường xoắn)** | $\#E^t(\mathbb{F}_p) = 2p + 2 - \#E(\mathbb{F}_p)$ có ước nguyên tố lớn | Đếm cấp đường cong xoắn bậc hai | Tấn công Twist attack (đặc biệt nguy hiểm với Montgomery ladder $x$-only) |
-| **10** | **Xuất xứ tham số (Provenance)** | Tham số chuẩn hóa hoặc sinh qua hàm băm ngẫu nhiên cứng (Rigid) | Đối chiếu RFC/NIST/SECG | Đường cong chứa cửa sau toán học (Backdoored Curve) |
-
----
-
-## 7. Quy Trình Validation Điểm & Cơ Chế Invalid-Curve Attack
-
-### 7.1 Năm bước kiểm tra điểm công khai (Public Key Validation)
-Khi nhận một điểm $P = (x, y)$ từ đối tác truyền thông qua biên mạng (Trust Boundary TB2), hệ thống bắt buộc phải thực thi 5 bước:
-
-1. **Kiểm tra điểm vô cực:** Xác nhận $P \neq \mathcal{O}$.
-2. **Kiểm tra biên tọa độ trường:** Xác nhận $x, y \in \mathbb{F}_p$, tức $0 \le x < p$ và $0 \le y < p$.
-3. **Kiểm tra phương trình đường cong (On-curve Check):**
-   $$y^2 \equiv x^3 + ax + b \pmod p$$
-4. **Kiểm tra nhóm con (Subgroup Membership Check):**
-   $$[n]P = \mathcal{O}$$
-   - Nếu $h = 1$: Bước 3 đảm bảo $P \in \langle G \rangle$ (vì mọi điểm $\neq \mathcal{O}$ đều có bậc $n$).
-   - Nếu $h > 1$: Bắt buộc phải tính $[n]P \stackrel{?}{=} \mathcal{O}$ hoặc áp dụng **cofactor clearing**: sử dụng điểm $P^* = [h]P$ cho các bước trao đổi tiếp theo.
-5. **Quy tắc đặc thù giao thức:** Ví dụ trên Curve25519 (RFC 7748), kiểm tra bí mật chia sẻ không được là điểm toàn $0$ (All-zero Shared Secret).
-
----
-
-### 7.2 Cơ chế đại số của Invalid-Curve Attack (Minh họa cho Track D)
+Khi có oracle hoặc kết quả phản hồi đủ để phân biệt đầu ra, một bên tấn công có thể suy ra phần dư $d\bmod r_i$. 
+Lặp với các bậc phù hợp, đôi một nguyên tố cùng nhau, rồi ghép bằng CRT.
+Tích các modulus cần đủ lớn để xác định duy nhất khóa trong miền khóa.
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor Attacker as Kẻ tấn công
-    participant Server as Dịch vụ ECDH (Dính lỗi TB2)
-    
-    Note over Attacker: 1. Chọn b' ≠ b sao cho #E' có ước nhỏ r_i<br/>2. Lấy điểm P_i ∈ E'(𝔽_p) có bậc r_i
-    Attacker->>Server: Gửi điểm giả P_i (On E', KHÔNG thuộc E)
-    Note over Server: Bỏ qua bước kiểm tra On-curve (TB2)<br/>Tính toán: S_i = [d_dh] P_i
-    Server->>Attacker: Trả về kết quả chia sẻ S_i (hoặc Oracle phản hồi)
-    Note over Attacker: Vì P_i có bậc r_i nên S_i = [d_dh mod r_i] P_i<br/>Attacker vét cạn j ∈ [0, r_i - 1] để tìm d_dh mod r_i
-    Note over Attacker: Lặp lại với các r_i khác nhau sao cho Π r_i ≥ n<br/>Áp dụng CRT khôi phục 100% khóa bí mật d_dh!
+    participant A as Tester
+    participant S as ECDH Service
+
+    Note over A: Chon diem P_i thuoc duong cong sai, co bac nho r_i
+
+    A->>S: Gui diem P_i
+
+    Note over S: Bo qua kiem tra on-curve
+    Note over S: Thuc hien tinh [d]P_i
+
+    S-->>A: Tra ve phan hoi
+
+    Note over A: Phan tich ket qua de suy ra d mod r_i
+
+    Note over A: Lap lai voi cac modulus khac
+
+    Note over A: Ghep cac phan du bang CRT neu du dieu kien
 ```
 
-#### Bước 1: Lựa chọn đường cong mục tiêu
-Kẻ tấn công giữ nguyên trường $\mathbb{F}_p$ và hệ số $a$, nhưng chọn một hệ số $b' \neq b$ sao cho đường cong $E': y^2 = x^3 + ax + b'$ có cấp $\#E'(\mathbb{F}_p)$ chứa các ước nguyên tố nhỏ $r_1, r_2, \dots, r_m$.
-
-#### Bước 2: Tìm điểm bậc nhỏ
-Trên đường cong $E'$, kẻ tấn công xác định các điểm $P_i$ có cấp đúng bằng $r_i$:
-$$[r_i]P_i = \mathcal{O}$$
-
-#### Bước 3: Khai thác lỗ hổng xử lý
-Kẻ tấn công gửi $P_i$ vào API thỏa thuận khóa ECDH. Do mã nguồn bị lỗi không kiểm tra phương trình đường cong:
-$$\text{Server tính: } \quad Q_i = [d]P_i$$
-Vì công thức nhân điểm chỉ dùng $a$ và tọa độ Affine, toàn bộ quá trình tính toán diễn ra chính xác trên nhóm điểm của đường cong sai $E'(\mathbb{F}_p)$!
-
-#### Bước 4: Trích xuất thặng dư (Residue Extraction)
-Do $P_i$ có cấp $r_i$:
-$$Q_i = [d]P_i = [d \bmod r_i]P_i$$
-Kẻ tấn công chỉ cần thử $j \in \{0, 1, \dots, r_i - 1\}$ sao cho $[j]P_i = Q_i$. Vì $r_i$ rất nhỏ (thường $r_i < 1000$), phép tìm kiếm này mất thời gian thực thi tức thì:
-$$d \equiv d_i \pmod{r_i}$$
-
-#### Bước 5: Ghép khóa bằng Định lý Số Dư Trung Hoa (CRT)
-Sau khi thu thập đủ các quan hệ đồng dư với các $r_i$ đôi một nguyên tố cùng nhau sao cho:
-$$\prod_{i=1}^m r_i \ge n$$
-Khóa bí mật $d$ được tái tạo hoàn toàn:
-$$d \equiv \sum_{i=1}^m d_i M_i \left(M_i^{-1} \bmod r_i\right) \pmod{\prod_{i=1}^m r_i}, \quad \text{với } M_i = \frac{\prod_{j=1}^m r_j}{r_i}$$
-
-> [!IMPORTANT]
-> **Đánh giá độ phức tạp:**
-> - Độ phức tạp generic ECDLP ban đầu: $\mathcal{O}(\sqrt{n})$ (ví dụ $2^{128}$ phép toán).
-> - Độ phức tạp của Invalid Curve Attack: $\sum_{i=1}^m r_i$ truy vấn (chỉ vài trăm đến vài ngàn phép tính điểm).
-> Không gian tìm kiếm sụp đổ hoàn toàn từ hàm mũ xuống thời gian thực thi gần như tức thì.
+> [!tip]
+**Các điều kiện quan trọng:** các $r_i$ phải được chọn sao cho thông tin thu được có thể ghép. CRT cổ điển cần modulus đôi một nguyên tố cùng nhau. Để khôi phục duy nhất $d$ trong miền $0\le d<n$, tích các modulus phải lớn hơn miền cần phân biệt (thường lấy ít nhất $n$). <br>
+Trong hệ thống thực tế, validation đầy đủ, xử lý lỗi đồng nhất và thiết kế giao thức đúng là các lớp phòng vệ trọng yếu.
 
 ---
 
-## 8. Mã Nguồn Kiểm Chứng Thực Nghiệm Toy Curve (Python 3)
+## VII. Ánh xạ lý thuyết vào các track thực nghiệm và dữ liệu D1–D6
 
-Đoạn mã sau thực thi toàn bộ cấu trúc đại số của đường cong $E(\mathbb{F}_{97}): y^2 \equiv x^3 + 2x + 3 \pmod{97}$, kiểm tra tính trơn, đếm điểm, phân tích cấp nhóm, và xác thực cấp của hai điểm $G_1, G_2$:
-
-```python
-#!/usr/bin/env python3
-"""
-curves/toy_check.py
-Mục đích: Kiểm chứng cơ sở toán học ECC trên Toy Curve p = 97.
-Được thiết kế phục vụ Topic 14 (ECC Cryptanalysis).
-"""
-
-def factorint(n: int) -> dict:
-    """Phân tích thừa số nguyên tố (thuần Python, không phụ thuộc thư viện ngoài)."""
-    factors = {}
-    d = 2
-    temp = n
-    while d * d <= temp:
-        while temp % d == 0:
-            factors[d] = factors.get(d, 0) + 1
-            temp //= d
-        d += 1
-    if temp > 1:
-        factors[temp] = factors.get(temp, 0) + 1
-    return factors
-
-# Tham số đường cong Short Weierstrass
-p = 97
-a = 2
-b = 3
-
-def compute_discriminant(a_param: int, b_param: int, prime: int) -> int:
-    """Tính biệt thức Delta = -16(4a^3 + 27b^2) mod p."""
-    return (-16 * (4 * pow(a_param, 3, prime) + 27 * pow(b_param, 2, prime))) % prime
-
-def point_add(P, Q):
-    """Cộng hai điểm Affine P, Q trên E(F_p). None đại diện cho O."""
-    if P is None:
-        return Q
-    if Q is None:
-        return P
-    
-    x1, y1 = P
-    x2, y2 = Q
-
-    # P + (-P) = O
-    if x1 == x2 and (y1 + y2) % p == 0:
-        return None
-
-    # Xác định hệ số góc lambda
-    if P == Q:
-        # Tiếp tuyến (Point Doubling)
-        if y1 == 0:
-            return None
-        lam = ((3 * x1 * x1 + a) * pow(2 * y1, -1, p)) % p
-    else:
-        # Cát tuyến (Point Addition)
-        lam = ((y2 - y1) * pow(x2 - x1, -1, p)) % p
-
-    x3 = (lam * lam - x1 - x2) % p
-    y3 = (lam * (x1 - x3) - y1) % p
-    return (x3, y3)
-
-def scalar_mult(k: int, P):
-    """Nhân vô hướng [k]P bằng Double-and-Add (LSB-first)."""
-    R = None
-    addend = P
-    while k > 0:
-        if k & 1:
-            R = point_add(R, addend)
-        addend = point_add(addend, addend)
-        k >>= 1
-    return R
-
-def compute_point_order(P) -> int:
-    """Xác định cấp của điểm P: số nguyên m nhỏ nhất sao cho [m]P = O."""
-    if P is None:
-        return 1
-    m = 1
-    curr = P
-    while curr is not None:
-        curr = point_add(curr, P)
-        m += 1
-    return m
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print(f"XÁC THỰC TOÁN HỌC ĐƯỜNG CONG E(F_{p}): y^2 = x^3 + {a}x + {b}")
-    print("=" * 60)
-
-    # 1. Kiểm tra biệt thức
-    delta = compute_discriminant(a, b, p)
-    short_disc = (4 * pow(a, 3, p) + 27 * pow(b, 2, p)) % p
-    print(f"[1] Biệt thức Δ = {delta} (mod {p}), Rút gọn (4a³+27b²) = {short_disc}")
-    assert short_disc != 0, "LỖI: Đường cong suy biến!"
-    print("    -> Đường cong trơn hoàn toàn (Nonsingular).\n")
-
-    # 2. Liệt kê tập hợp điểm hữu tỉ
-    rational_points = []
-    for x in range(p):
-        rhs = (pow(x, 3, p) + a * x + b) % p
-        for y in range(p):
-            if pow(y, 2, p) == rhs:
-                rational_points.append((x, y))
-
-    total_order = len(rational_points) + 1  # Cộng thêm điểm ở vô cực O
-    factors = factorint(total_order)
-    print(f"[2] Cấp nhóm #E(F_p) = {total_order} điểm")
-    print(f"    Phân tích thừa số nguyên tố: {total_order} = {dict(factors)}")
-
-    # 3. Kiểm định cận Hasse
-    hasse_diff = abs(total_order - (p + 1))
-    hasse_bound = 2 * (p ** 0.5)
-    print(f"[3] Kiểm tra định lý Hasse: |{total_order} - {p+1}| = {hasse_diff} <= 2√{p} ≈ {hasse_bound:.3f}")
-    assert hasse_diff <= hasse_bound, "LỖI: Vi phạm định lý Hasse!"
-    print("    -> Cận Hasse thỏa mãn tuyệt đối.\n")
-
-    # 4. Kiểm định hai điểm cơ sở G1 và G2
-    test_points = [((3, 6), "G1"), ((0, 10), "G2")]
-    print("[4] Kiểm định cấp các nhóm con:")
-    for pt, name in test_points:
-        n = compute_point_order(pt)
-        h = total_order // n
-        print(f"    - Điểm {name} = {pt}:")
-        print(f"        * Subgroup Order n = {n} (Phân tích: {dict(factorint(n))})")
-        print(f"        * Cofactor h = {h}")
-        # Kiểm tra [n]G == O
-        assert scalar_mult(n, pt) is None, f"LỖI: [{n}]{name} != O"
-        print(f"        * Xác nhận [{n}]{name} == O: ĐÚNG")
-
-    print("\n=> TOÀN BỘ PHÉP TÍNH TOÁN HỌC KHỚP VỚI ĐẶC TẢ.")
-```
+| Cơ sở toán học / chủ đề | Track | Tệp mã nguồn tham chiếu | Bộ dữ liệu | Metric có thể quan sát |
+|---|---|---|---|---|
+| Cấp nhóm $\#E,n,h,q_{\max}$ | Độ bền tham số | `curves/gen_smooth_curves.py` | `data/D1_curves.csv` | `largest_prime_factor`, `cofactor_h`, tỷ lệ tham số đạt tiêu chí |
+| Generic ECDLP: brute force, BSGS, Pollard rho | Track A | `curves/bsgs.py`, `curves/pollard_rho.py` | `data/D2_ecdlp_benchmarks.csv` | Số phép toán nhóm, CPU cycles, xu hướng tăng theo $n$ |
+| Pohlig–Hellman / unsafe order | Track B | `curves/pohlig_hellman.py` | `data/D2_ecdlp_benchmarks.csv` | Thời gian khôi phục theo $q_{\max}$, so sánh với BSGS trên $n$ |
+| Nonce reuse trong ECDSA | Track C | `signatures/nonce_reuse_attacker.py` | `data/D3_signatures.csv` | Phát hiện `repeated_r`, trạng thái khôi phục khóa trong môi trường mô phỏng |
+| Point validation / Invalid-Curve | Track D | `validation/gen_invalid_curves.py`, `validation/crt_solver.py` | `data/D4_validation.csv` | Trạng thái `on_curve`, số truy vấn oracle, tỷ lệ kiểm thử thành công/thất bại |
+| Scalar multiplication timing leakage | Track F | `scripts/measure_harness.py` | `data/D6_timing.csv` | Phân phối cycles, kiểm định Welch's t-test giữa các lớp đầu vào |
 
 ---
 
-## 9. Bảng Ánh Xạ Lý Thuyết Vào Các Track Thực Nghiệm & Bộ Dữ Liệu D1–D6
-
-| Cơ sở toán học | Track ứng dụng | Tệp mã nguồn kiểm chứng | Bộ dữ liệu thực nghiệm (Corpus) | Đại lượng / Metric đo lường thực tế |
-| :--- | :---: | :--- | :--- | :--- |
-| **Cấp nhóm $\#E$, $n$, $h$, $q_{\max}$** | Bền vững tham số | `curves/gen_smooth_curves.py` | `data/D1_curves.csv` | Tỷ lệ thặng dư, `largest_prime_factor`, `cofactor_h` |
-| **Generic ECDLP ($W_{\text{brute}}$ vs $W_{\text{BSGS}}$ vs $W_\rho$)** | **Track A** | `curves/bsgs.py`<br/>`curves/pollard_rho.py` | `data/D2_ecdlp_benchmarks.csv` | Số phép cộng điểm (`operations`), `cpu_cycles`, hệ số góc $\log(\text{ops}) / \log(n)$ |
-| **Pohlig–Hellman ($W_{\text{eff}} \approx \mathcal{O}(\sqrt{q_{\max}})$)** | **Track B** | `curves/pohlig_hellman.py` | `data/D2_ecdlp_benchmarks.csv` | Thời gian khôi phục theo hàm của $q_{\max}$, so sánh đối chứng với BSGS trên $n$ |
-| **Nonce Reuse trong ECDSA** | **Track C** | `signatures/nonce_reuse_attacker.py` | `data/D3_signatures.csv` | Phát hiện trường `repeated_r`, khôi phục khóa riêng $d$ trong $\mathcal{O}(1)$ |
-| **Point Validation & Invalid-Curve** | **Track D** | `validation/gen_invalid_curves.py`<br/>`validation/crt_solver.py` | `data/D4_validation.csv` | Trạng thái `on_curve`, số lượng truy vấn Oracle, xác suất khôi phục khóa |
-| **Scalar Mult Timing Leakage** | **Track F** | `scripts/measure_harness.py` | `data/D6_timing.csv` | Phân phối thời gian thực thi (cycles), kiểm định Welch's t-test giữa bit $0$ và bit $1$ |
-
----
-
-## 10. Giới Hạn Nghiên Cứu & Khuyến Nghị Thực Hành
+## VIII. Giới hạn nghiên cứu và thực hành
 
 > [!CAUTION]
-> **Giới hạn nghiên cứu (Academic Scope Guardrails):**
-> 1. **Nguyên tắc Toy Curve:** Các đường cong tham số nhỏ ($p = 97$, v.v.) được sử dụng trong tài liệu này chỉ nhằm mục đích minh họa trực quan bản chất cơ chế toán học và kiểm chứng thuật toán. Tuyệt đối **không** suy diễn rằng các đường cong tiêu chuẩn công nghiệp (như NIST P-256 hay Curve25519) có thể bị phá vỡ bằng các công cụ tính toán thông thường.
-> 2. **Negative Controls:** Đường cong P-256 và Ed25519 được đưa vào đề tài với vai trò **mẫu đối chứng âm (Negative Control)**: khi cấu hình chuẩn xác và thư viện đã được vá lỗi, mọi cuộc tấn công Generic, Invalid-Curve, hay Nonce Extraction đều phải ghi nhận kết quả thất bại.
-> 3. **Cảnh báo triển khai:** Mọi nỗ lực tự viết hàm nhân vô hướng (self-made scalar multiplication) trong môi trường sản xuất đều tiềm ẩn nguy cơ rò rỉ kênh kề nghiêm trọng. Luôn sử dụng các thư viện mật mã đã qua kiểm toán độc lập (như libsodium, libsecp256k1, hoặc pyca/cryptography bản vá).
+> **Giới hạn học thuật:**
+> 1. Các đường cong nhỏ như $p=17$ hoặc $p=97$ chỉ để minh họa phép toán và kiểm chứng chương trình; không suy diễn rằng P-256, Curve25519 hoặc các đường cong chuẩn khác có thể bị phá bằng công cụ tính toán thông thường.
+> 2. **P-256 và Ed25519** có thể được dùng làm mẫu đối chứng âm: với cấu hình chuẩn và thư viện đã được vá lỗi, các thử nghiệm generic, invalid-curve hoặc nonce-extraction được thiết kế đúng phải không khôi phục được khóa.
+> 3. Kết quả benchmark phụ thuộc phần cứng, thư viện, biên dịch, cách đo và thiết kế thí nghiệm. Cần ghi lại môi trường, seed, số lần lặp và metric, tránh lấy một lần chạy làm kết luận.
+> 4. Phần mềm thực tế cần thư viện mật mã được duy trì, phép toán constant-time và kiểm thử theo giao thức.
+
+--- 
+
+## Tóm tắt nhanh
+
+| Ký hiệu | Ý nghĩa |
+|---|---|
+| $p$ | Số nguyên tố xác định trường $\mathbb{F}_p$ |
+| $E$ | Đường cong $y^2 = x^3 + ax + b$, $\Delta \neq 0$ |
+| $\#E$ | Số điểm trên đường cong, $\#E = p + 1 - t$ |
+| $G$ | Điểm gốc (generator) |
+| $n$ | Bậc của $G$ (số nguyên dương nhỏ nhất sao cho $nG = O$), thường là số nguyên tố |
+| $h$ | Cofactor, $h = \#E / n$ |
+| $d$ | Khóa bí mật |
+| $Q = dG$ | Khóa công khai |

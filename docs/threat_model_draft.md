@@ -68,125 +68,505 @@ flowchart LR
 
 ---
 
-## A.3 Bảng Kiểm Kê Tài Sản Mật Mã (Asset Inventory)
+## A.3 ASSETS
 
-Phân loại cấp độ bảo vệ theo tiêu chuẩn CIA (**C**onfidentiality - Bí mật, **I**ntegrity - Toàn vẹn, **A**vailability - Khả dụng) với thang tác động: **Cao (H)**, **Trung bình (M)**, **Thấp (L)**:
+> [!NOTE]
+> ***Liệt kê, phân nhóm và đánh giá mức độ ưu tiên của tài sản***
 
-| ID | Tên Tài Sản | Bản Chất Mật Mã | Thuộc Hệ Thống | Yêu Cầu An Toàn | Mức Tác Động Khi Thất Bại | Các Tầng Tấn Công Liên Quan |
-| :---: | :--- | :--- | :---: | :---: | :---: | :--- |
-| **A1** | **Signing Private Scalar $d_{\text{sign}}$** | Bí mật dài hạn | S1, S3, S4 | **C, I** | **H** — Giả mạo token, giao dịch trái phép, chiếm quyền root | Nonce Reuse (L3), Nonce Bias (L5), Timing (L6), Fault (L7) |
-| **A2** | **ECDH Static Private Scalar $d_{\text{dh}}$** | Bí mật dài hạn | S2 | **C** | **H** — Giải mã toàn bộ lưu lượng TLS/VPN, giải mã dữ liệu nhạy cảm | Invalid-Curve (L2), Small-Subgroup Confinement |
-| **A3** | **Per-signature Nonce $k$** | Bí mật 1 lần (Ephemeral) | S1, S3, S4 | **C** (Tuyệt đối), Unpredictability | **H** — Chỉ cần lộ 1 nonce $k$ là khôi phục hoàn toàn $d_{\text{sign}}$ | Nonce Reuse (L3), RNG Low Entropy (L4), Bias HNP (L5) |
-| **A4** | **Ephemeral ECDH Scalar $r_{\text{eph}}$** | Bí mật tạm thời | S2 | **C** | **M** — Nguy hiểm nếu tái dùng hoặc bộ sinh số ngẫu nhiên dự đoán được | RNG Failure, Cross-session Key Collision |
-| **A5** | **Domain Parameters $(p, a, b, G, n, h)$** | Tham số công khai | Tất cả | **I** (Toàn vẹn tuyệt đối) | **H** — Tham số yếu phá hủy độ phức tạp ECDLP từ gốc | Unsafe Curve (L1), Pohlig–Hellman, Anomalous / MOV |
-| **A6** | **Public Key / JWK / X.509 Certificate** | Công khai cần xác thực | S1, S2, S3 | **I** | **H** — Thay thế khóa công khai khiến Verifier chấp nhận kẻ mạo danh | Wrong-Curve JWK Injection, Key Confusion Attack |
-| **A7** | **Peer Public Point (Đầu vào ECDH)** | Dữ liệu **KHÔNG TIN CẬY** | S2 | Input Validation | **H** — Nguồn gốc trực tiếp của tấn công Invalid-Curve | Điểm không nằm trên curve (On-curve), Điểm bậc nhỏ |
-| **A8** | **Signature Payload $(r, s)$ / Token** | Dữ liệu **KHÔNG TIN CẬY** | S1, S3 | Canonical Validation | **H** — Verifier Bypass, Signature Malleability | Non-canonical $S \ge L$ (Ed25519), High-$S$ (secp256k1) |
-| **A9** | **Shared Secret & KDF Master Key** | Bí mật phiên | S2 | **C** | **H** — Cho phép giải mã phiên hội thoại hiện tại | All-zero Shared Secret (Curve25519), Small Subgroup |
-| **A10** | **Bộ Sinh Số Ngẫu Nhiên (CSPRNG / RFC 6979)** | Thành phần tin cậy hạt nhân | S1, S3, S4 | **I**, Entropy Quality | **H** — Gốc rễ của mọi lỗi lộ khóa chữ ký số | Thiếu entropy lúc khởi động, Bias phân phối bit |
-| **A11** | **Metadata Vòng Đời Khóa (`kid`, revocation)** | Dữ liệu cấu hình | S1, S3 | **I, A** | **M–H** — Kẻ tấn công ép hệ thống quay về dùng khóa cũ | Key Confusion, Stale Key Rollback |
-| **A12** | **Phản Hồi Lỗi / Độ Trễ API (Side-channel)** | **Kênh Thông Tin Ngầm** | S1, S2 | Uniformity (Đồng nhất) | **M–H** — Trở thành Decryption / Verification Oracle | Timing Oracle, Decryption Feedback (CVE-2019-9155) |
-| **A13** | **Corpus D1–D7 & Dấu Vết Thực Nghiệm** | Dữ liệu nghiên cứu | Toàn repo | **I**, Tính tái lập | **L–M** — Sai lệch kết quả dẫn tới kết luận sai | Không chứa khóa bí mật của môi trường Production |
-| **A14** | **Chuỗi Cung Ứng Mã Nguồn & Bản Vá Thư Viện** | Nền tảng thực thi | Tất cả | **I** | **M** — Sai lệch version dẫn tới kết luận sai về CVE | Thiếu phiên bản cố định (Pin version), Lỗ hổng upstream |
+### Ký hiệu
 
-> [!CAUTION]
-> **Quy tắc phân biệt chiến lược:**
-> - Nhóm **A1–A3** là "Crown Jewels" (Bảo vật tối thượng) — mục tiêu bảo vệ trọng yếu của toàn bộ hệ thống.
-> - Nhóm **A7, A8, A12** không phải dữ liệu bí mật nhưng cấu thành **bề mặt tấn công (Attack Surface)**. Lỗ hổng tại các điểm này làm sụp đổ hoàn toàn mức độ an toàn lý thuyết $W_{\text{eff}} \ll 2^{128}$.
+| Ký hiệu | Công thức / Tính chất | Ý nghĩa |
+|:-:|:-:|---|
+| `p` | số nguyên tố <br> `p > 3` | Kích thước trường hữu hạn Fp |
+| `a, b` | `y² = x³ + ax + b` | Hệ số đường cong |
+| `G` | | Điểm sinh (base point) |
+| `n` | số nguyên tố | Bậc của `G` |
+| `#E` | `#E = p + 1 − t, \|t\| ≤ 2√p` | Số điểm của đường cong |
+| `h` | `h = #E / n` | Cofactor |
+| `O` | | Điểm vô cùng (phần tử đơn vị) |
+| `d` | | Khóa bí mật |
+| `Q` | `Q = d·G` | Khóa công khai |
+| `Q'` | | Điểm do peer/attacker gửi tới, chưa được tin cậy |
+| `rᵢ` | nguyên tố nhỏ | Ước nhỏ của bậc điểm (của `#E'` hoặc của `h`) |
+| `k` | | Nonce của ECDSA |
+| `(r, s)` | `r = x(k·G) mod n` | Chữ ký ECDSA |
+
+### Thuộc tính cần bảo vệ
+
+- **C** – Confidentiality (bí mật)
+- **I** – Integrity (toàn vẹn)
+- **A** – Availability (sẵn sàng; với dữ liệu thực nghiệm hiểu là *tái lập được và dùng được*)
+
+### Bảng tài sản
+
+| ID | Nhóm | Tài sản | Mô tả | C | I | A | Mức |
+|---|---|---|---|:-:|:-:|:-:|:-:|
+| A01 | Bí mật | Khóa bí mật `d` | Trong `Q = d·G`, là mục tiêu chính tấn công. Ở demo: khóa ký `d_sign` của service JWT (S1), khóa ECDH tĩnh `d_dh` của API server (S2) | ✔ | ✔ |  | Rất cao |
+| A02 | Bí mật | Shared secret `d·Q'` và khóa phiên dẫn xuất | Kết quả ECDH, là thứ bị rò rỉ trong invalid-curve / small-subgroup attack. Với X25519, kết quả toàn 0 là dấu hiệu điểm bậc thấp, cần từ chối | ✔ | ✔ |  | Cao |
+| A03 | Bí mật | Nguồn ngẫu nhiên (RNG) sinh `d`, ephemeral key và nonce `k` | RNG yếu thì đoán được `d` hoặc `k` mà không cần giải ECDLP. RFC 6979 là phương án xác định thay thế cho nonce ngẫu nhiên | ✔ | ✔ |  | Cao |
+| A04 | Tham số | Số nguyên tố `p` | Phải là nguyên tố, `p > 3` |  | ✔ |  | Cao |
+| A05 | Tham số | Hệ số `a, b` <br> Điều kiện <br> `4a³ + 27b² ≢ 0 (mod p)` | Đường cong không suy biến, kiểm tra trong Fp, không phải trên số thực |  | ✔ |  | Cao |
+| A06 | Tham số | `#E` | Số điểm, kiểm tra theo định lý Hasse |  | ✔ |  | Cao |
+| A07 | Tham số | Bậc `n` của `G` | Phải nguyên tố, `nG = O`, quyết định chi phí tấn công (`O(n)`, `O(√n)`) |  | ✔ |  | Cao |
+| A08 | Tham số | Cofactor <br> `h = #E / n` | `h > 1` thì tồn tại nhóm con nhỏ, là điều kiện của small-subgroup attack |  | ✔ |  | Cao |
+| A09 | Tham số | Điểm sinh `G` | Phải nằm trên đường cong và có bậc đúng bằng `n` |  | ✔ |  | Cao |
+| A10 | Công khai | Khóa công khai <br> `Q = d·G` (kể cả dạng JWK) | Đầu vào của mọi tấn công ECDLP (cùng `G, n`), cần đảm bảo tính toàn vẹn. Với JWK: nếu `crv` hoặc khóa bị thay thế, verifier chấp nhận khóa của kẻ mạo danh |  | ✔ |  | Trung bình |
+| A11 | Logic phòng thủ | Hàm validate điểm | Kiểm tra: tọa độ trong `[0, p)`, thuộc đường cong, khác `O`, `n·Q' = O`, xử lý cofactor |  | ✔ |  | Rất cao |
+| A12 | Logic phòng thủ | Hàm parse điểm và đổi Affine ↔ Jacobian | Biên nhận dữ liệu từ ngoài, một điểm có nhiều biểu diễn <br> `(λ²X, λ³Y, λZ)`; `Z ≠ 0` |  | ✔ |  | Cao |
+| A13 | Logic phòng thủ | Lõi số học (add / double / inverse / double-and-add) | Công thức cộng không dùng `b`, cần xử lý `P = Q`, `P = −P`, `P + O`, `y = 0` | ✔ | ✔ |  | Cao |
+| A14 | Dữ liệu thực nghiệm | D1 – tập toy curve (n 16..40 bit) | `data/D1_curves.csv`, đầu vào chung cho các tấn công ECDLP |  | ✔ | ✔ | Trung bình |
+| A15 | Dữ liệu thực nghiệm | D2 – benchmark ECDLP | `data/D2_ecdlp_benchmarks.csv` (ops, cycles, memory) của exhaustive / BSGS / Rho / PH, cần nhất quán để kết luận độ phức tạp |  | ✔ | ✔ | Trung bình |
+| A16 | Dữ liệu thực nghiệm | D3, D4, D6 và `schema_definition.json` | D3 = `D3_signatures.csv`, D4 = `D4_validation.csv`, D6 = `D6_timing.csv`. Schema thống nhất giữa các thành viên |  | ✔ | ✔ | Trung bình |
+| A17 | Dữ liệu thực nghiệm | Ground-truth `d` của toy curve | Khóa bí mật giả lập, chỉ dùng để kiểm chứng kết quả tấn công | ✔ | ✔ |  | Trung bình |
+| A18 | Mã nguồn / môi trường | Script tấn công, seed, môi trường đo, phiên bản thư viện | Seed cố định, ghi và cố định (pin) phiên bản thư viện, image Docker, đo trong điều kiện nhất quán. BSGS tốn bộ nhớ `O(√n)` nên cần ghi RAM khi đo |  | ✔ | ✔ | Trung bình |
+| A19 | Đối chứng | Tham số P-256 và X25519 (negative control) | P-256: `h = 1`, dạng Weierstrass. X25519: dạng Montgomery, cofactor 8, chỉ dùng tọa độ `x`, khác cách phòng thủ của Weierstrass |  | ✔ |  | Trung bình |
+| A20 | Bí mật | Nonce `k` của ECDSA | `k` lặp hoặc đoán được thì khôi phục được `d` từ chữ ký. Tài sản trung tâm của Track C | ✔ | ✔ |  | Rất cao |
+| A21 | Công khai | Chữ ký `(r, s)` và JWT token | Công khai nhưng là đầu vào của tấn công nonce reuse, cần đảm bảo tính nguyên vẹn. Verifier phải kiểm tra định dạng chuẩn của chữ ký |  | ✔ |  | Trung bình |
+| A22 | Hệ thống demo | Service demo `jwt-es256`, `ecdh-api` (bản lỗi và bản vá) | Bản lỗi cố ý chứa lỗ hổng, chỉ chạy trong sandbox, bản vá là đối chứng |  | ✔ | ✔ | Trung bình |
+| A23 | Quản lý khóa | Metadata vòng đời khóa (`kid`, thu hồi, key rotation) | Cấu hình quyết định verifier tin khóa nào. Nếu bị ép quay về khóa cũ hoặc khóa đã lộ thì khóa đó vẫn dùng được để giả mạo. Liên quan bản vá "RFC 6979 + Key Rotation" của S1 |  | ✔ | ✔ | Trung bình |
+| A24 | Bề mặt tấn công | Dữ liệu đầu vào từ peer (điểm `Q'`) | Không phải bí mật nhưng là nguồn trực tiếp của invalid-curve và small-subgroup attack; mọi tính an toàn phụ thuộc việc xử lý đúng tại TB2, TB3 |  | ✔ |  | Cao |
+| A25 | Bề mặt tấn công | Phản hồi lỗi của API (oracle) | Mã lỗi, thông báo lỗi, kết quả thành công/thất bại. Nếu phân biệt được bước validate bị vượt qua thì trở thành oracle. Thời gian phản hồi ngoài phạm vi (mục 7) |  | ✔ |  | Cao |
+
+> [!attention]
+> **Phân biệt chiến lược:**
+> - **A01, A20** là "Crown Jewels" (bảo vật tối thượng): mục tiêu bảo vệ trọng yếu của toàn hệ thống.
+> - **A21, A24, A25** không phải dữ liệu bí mật nhưng cấu thành **bề mặt tấn công**. Lỗ hổng tại các điểm này làm độ an toàn thực tế tụt xa so với mức lý thuyết của đường cong.
+
+### Tài sản theo track
+
+| Track | Tài sản chính |
+|---|---|
+| A – ECDLP | A04–A09, A10, A14, A15, A17, A18 |
+| C – ECDSA nonce reuse | A01, A03, A20, A21, A23, A16 (D3), A22 (JWT) |
+| D – Invalid-curve / subgroup | A01, A02, A08, A11, A12, A13, A24, A25, A16 (D4), A22 (ECDH API) |
+| Đối chứng | A19 |
+
+### Tài sản theo mức ưu tiên
+
+| Mức | Tài sản |
+|---|---|
+| Rất cao | A01 (`d`), A11 (validate), A20 (nonce `k`) |
+| Cao | A02, A03, A04, A05, A06, A07, A08, A09, A12, A13, A24, A25 |
+| Trung bình | A10, A14, A15, A16, A17, A18, A19, A21, A22, A23 |
 
 ---
 
 ## A.4 Bản Đồ Ranh Giới Tin Cậy (Trust Boundaries Architecture)
 
-Sơ đồ dưới đây phân định ranh giới cách ly vật lý, tiến trình và ngữ cảnh xử lý dữ liệu giữa vùng không tin cậy bên ngoài và lõi mật mã bảo mật bên trong:
+> [!note]
+> ***Xác định vùng, ranh giới và tài sản đi qua từng ranh giới***
+
+### 1. Sơ đồ tổng thể
+
+#### 1.1. Luồng chính (runtime)
 
 ```mermaid
-flowchart TD
-    subgraph TB0["TB0: Lab Host / Vùng Nghiên Cứu Cách Ly"]
-        subgraph UntrustedZone["VÙNG KHÔNG TIN CẬY (External Untrusted Network)"]
-            Attacker["Kẻ tấn công / Test Harness"]
-            InputPayload["Dữ liệu độc hại:<br/>- A7: Peer Point giả mạo<br/>- A8: Chữ ký Non-canonical / Malformed Token"]
-            Attacker --> InputPayload
-        end
-
-        InputPayload ==>|"TB1: Network / REST API Boundary"| ParserEngine
-
-        subgraph HostServices["HỆ THỐNG DỊCH VỤ LAB"]
-            subgraph ParserZone["VÙNG XỬ LÝ ĐẦU VÀO"]
-                ParserEngine["Bộ Giải Mã & Kiểm Tra:<br/>- On-curve Check? (y² ≡ x³ + ax + b)<br/>- Subgroup Order Check? ([n]P = 𝒪)<br/>- Canonical DER / S < L Verification<br/>- Algorithm & Curve Pinning (Allow-list)"]
-            end
-
-            ParserEngine ==>|"TB2: Parser / Cryptographic Validation Boundary"| CryptoCore
-
-            subgraph CryptoCoreZone["VÙNG LÕI MẬT MÃ (Cryptographic Core)"]
-                CryptoCore["Module Tính Toán Lõi:<br/>- Nhân vô hướng Constant-time<br/>- Ký ECDSA / EdDSA<br/>- Thỏa thuận khóa ECDH<br/>- Blinding tọa độ / Scalar Blinding"]
-                RNGModule["Bộ Sinh Nonce Tin Cậy:<br/>- Deterministic RFC 6979<br/>- Hệ Thống CSPRNG (/dev/urandom)"]
-                RNGModule <==>|"TB4: Entropy Boundary"| CryptoCore
-            end
-
-            CryptoCore ==>|"TB5: Key Storage Boundary"| KeyVault
-
-            subgraph SecureStorage["VÙNG LƯU TRỮ KHÓA AN TOÀN"]
-                KeyVault[("Kho Khóa Riêng:<br/>- A1: d_sign (Bí mật ký)<br/>- A2: d_dh (Bí mật ECDH)<br/>- Cô lập tiến trình / HSM-Sim")]
-            end
-        end
-
-        HostServices -.->|"TB6: Physical / Microarchitectural Boundary (Cache, Timing, Power)"| SideChannelLeak["Rò rỉ thời gian thực thi & vi kiến trúc (Track F)"]
-        HostServices -.->|"TB7: Supply Chain Boundary"| UpstreamLibs["Thư viện phụ thuộc (OpenSSL, PyCA, Libsecp256k1)"]
+flowchart LR
+    subgraph U[Vùng không tin cậy]
+        P["Peer / Attacker<br/>(A24: điểm Q')"]
     end
+    subgraph Z1[Z1 Khởi tạo tham số]
+        C["p, a, b, G, n, h<br/>(A04–A09)"]
+    end
+    subgraph Z2[Z2 Xử lý đầu vào]
+        PA["Parse<br/>(A12)"]
+        V["Validate<br/>(A11)"]
+    end
+    subgraph Z3[Z3 Vùng tin cậy]
+        K["Khóa d + RNG<br/>(A01, A03)"]
+        M["Lõi số học d·Q'<br/>(A13)"]
+    end
+    subgraph Z4[Z4 Đầu ra]
+        O["Oracle<br/>(A02, A25)"]
+    end
+    subgraph Z5[Z5 Lưu trữ khóa]
+        KV[("Kho khóa d, kid<br/>(A01, A23)")]
+    end
+    P -- "TB1 tham số" --> C
+    P -- "TB2 bytes Q'" --> PA
+    PA -- "TB3 điểm đã parse" --> V
+    V -- "TB4 điểm hợp lệ" --> M
+    C -- "tham số đã kiểm" --> M
+    K --> M
+    KV -- "TB10" --> K
+    M -- "TB5" --> O
+    O -- "phản hồi attacker quan sát được" --> P
 ```
 
-### Bảng Đặc Tả Chi Tiết 8 Ranh Giới Tin Cậy
+#### 1.2. Luồng ký ECDSA (Track C)
 
-| Ranh Giới | Tên Ranh Giới | Phía Không Tin Cậy $\to$ Phía Tin Cậy | Kiểm Soát Kỹ Thuật Bắt Buộc | Lỗ Hổng Tiêu Biểu Khi Vi Phạm | Track Thực Nghiệm |
-| :---: | :--- | :--- | :--- | :--- | :---: |
-| **TB1** | **Network / API Boundary** | Client ngoài $\to$ Web API endpoint | Rate-limiting, xác thực danh tính, chuẩn hóa thông báo lỗi | Tấn công lặp truy vấn Oracle không giới hạn | **D** |
-| **TB2** | **Parser / Validation Boundary** | Byte thô $\to$ Đối tượng điểm / chữ ký | Kiểm tra tọa độ trong trường, phương trình on-curve, cấp subgroup $[n]P = \mathcal{O}$, encoding canonical | **Invalid-curve attack, Verifier signature bypass** | **D, G** |
-| **TB3** | **Crypto Core Boundary** | Đối tượng đã validate $\to$ Hàm số học | Triển khai Constant-time, scalar blinding, projective randomization | Side-channel timing leak, Cache attack | **F** |
-| **TB4** | **Entropy Boundary** | Hệ điều hành / RNG $\to$ Nonce $k$ | Sử dụng CSPRNG chuẩn hoặc thuật toán tất định RFC 6979 | Nonce reuse, Nonce bias (PuTTY CVE-2024-31497) | **C, E** |
-| **TB5** | **Key Storage Boundary** | Bộ nhớ tiến trình khác $\to$ Scalar bí mật | Phân quyền truy cập bộ nhớ (`mlock`), xóa khóa sau khi dùng (`explicit_bzero`) | Đọc trộm bộ nhớ, Dump tiến trình | **S4** |
-| **TB6** | **Physical / Microarchitectural** | Luồng tiến trình đồng chia sẻ CPU $\to$ Cache L1/L3 | Cố định CPU core (Core Pinning), khử nhiễu bộ nhớ đệm | Flush+Reload, Prime+Probe, Minerva timing | **F** |
-| **TB7** | **Supply Chain Boundary** | Kho gói công cộng $\to$ Mã nhị phân ứng dụng | Khóa chặt version (Pin requirements.txt / lock file), quét SBOM | Nhúng nhầm phiên bản có CVE đã biết | **Tất cả** |
+```mermaid
+flowchart LR
+    R["RNG hoặc RFC 6979<br/>(nguồn nonce k)"] -- TB8 --> S["Signer trong Z3<br/>(d, k)"]
+    S -- TB5 --> O["Chữ ký (r,s) / JWT"]
+    O --> P["Kênh công khai<br/>Attacker thu thập token<br/>để tìm r trùng nhau"]
+```
 
-> [!IMPORTANT]
-> **Trọng tâm kiến trúc:** Ranh giới **TB2** là trọng tâm tuyệt đối được nhấn mạnh trong hướng dẫn: *Point validation và Subgroup validation là yêu cầu mật mã học tiên quyết (theo NIST SP 800-56A), hoàn toàn không phải chỉ là việc làm sạch dữ liệu đầu vào (input sanitation) thông thường*. Việc ngộ nhận rằng "dữ liệu qua TB2 đã sạch" là nguyên nhân trực tiếp dẫn tới hàng loạt CVE nghiêm trọng: CVE-2015-7940, CVE-2016-9121, và CVE-2026-26007.
+#### 1.3. Vùng thực nghiệm (ngoài runtime)
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 35, "padding": 6}, "themeVariables": {"fontSize": "13px"}}}%%
+flowchart LR
+    L["<b>Lab / Sandbox</b><br/>toy curve, smooth curve,<br/>script, service demo"]
+    R["<b>Thực tế</b><br/>P-256, X25519<br/>(negative control)"]
+    P["<b>Pipeline dữ liệu</b><br/>D1 → D2 → D3 → D4 → D6 → báo cáo"]
+    E["<b>Mạng ngoài</b><br/>hệ thống thật"]
+    S["<b>Chuỗi cung ứng</b><br/>kho gói, thư viện, image"]
+
+    L -- "TB6: diễn giải" --> R
+    L -- "TB7" --> P
+    L -- "TB9: cô lập" --> E
+    S -- "TB11" --> L
+```
+
+### 2. Các vùng (zone)
+
+| Vùng | Tên | Mức tin cậy | Chứa | Tài sản chính |
+|---|---|---|---|---|
+| U | Không tin cậy | Không tin | Peer, attacker, mạng, mọi dữ liệu đến từ ngoài | (không có, là nguồn mối đe dọa) |
+| Z1 | Khởi tạo tham số | Tin có điều kiện (nếu tham số được kiểm hoặc cố định) | `p, a, b, G, n, h` | A04–A09 |
+| Z2 | Xử lý đầu vào | Trung gian (biến dữ liệu chưa tin thành đã tin) | Parse, validate | A11, A12, A24 (đi qua) |
+| Z3 | Vùng tin cậy | Cao nhất | `d`, RNG, nonce `k`, lõi số học | A01, A03, A13, A20 |
+| Z4 | Đầu ra | Không tin (mọi thứ ra khỏi đây attacker đều thấy) | Shared secret, MAC, thông báo lỗi, thời gian, chữ ký `(r,s)` | A02 (khi lộ), A21, A25 |
+| Z5 | Lưu trữ khóa | Tin cao, cần cô lập khỏi tiến trình khác | Kho khóa `d`, metadata `kid`, thông tin xoay khóa | A01 (lưu trữ), A23 |
+| Lab | Phòng thí nghiệm / sandbox | Tin nội bộ, cô lập khỏi mạng ngoài | Toy curve, script, dữ liệu, service demo | A14–A19, A22 |
+
+### 3. Phân tích từng ranh giới
+
+- #### TB1: Tham số đường cong đi vào hệ thống (U → Z1)
+
+**Mô tả:** Mọi tính chất an toàn suy ra từ `p, a, b, G, n, h`. Nếu attacker đề xuất hoặc sửa được tham số, họ chọn sẵn một đường cong yếu mà không cần phá thuật toán nào.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Nguồn tham số | Peer tự chọn curve (kể cả trường `crv` trong JWK/token), hoặc tham số bị sửa trên đường truyền | Ép sang curve yếu |
+| `p` | Không phải số nguyên tố | Phép chia modulo không còn là trường, nhóm điểm mất cấu trúc |
+| `Δ = 4a³ + 27b²` | `Δ ≡ 0 (mod p)`, kiểm trên Fp chứ không phải số thực | Đường cong suy biến, ECDLP dễ hơn nhiều |
+| `#E` | Không khớp Hasse `\|#E − (p+1)\| ≤ 2√p`; hoặc có nhiều ước nguyên tố nhỏ (smooth) | Pohlig–Hellman giải theo từng ước nhỏ |
+| `n`, `G` | `n` không nguyên tố; `nG ≠ O`; `G` có bậc nhỏ hơn `n` công bố | Kiểm subgroup ở TB3 sai theo |
+| `h` | Bị khai thấp hơn thực tế | Nhóm con nhỏ lọt qua |
+
+**Tài sản cần bảo vệ:** A04, A05, A06, A07, A08, A09 (toàn vẹn); A10 (gián tiếp, qua `crv` trong JWK)
+
+**Biện pháp:** Dùng tham số cố định từ chuẩn (allow-list đường cong có tên, ghim `alg` và `crv`).
+Nếu nhận tham số thì kiểm đủ:
+- `p` nguyên tố
+- `Δ ≢ 0`
+- Hasse
+- `n` nguyên tố
+- `nG = O`
+- `h = #E/n`
+
+> [!attention]
+> **Lưu ý:** Biên này **cố ý để hở** ở toy curve và smooth curve (yếu có chủ đích, phục vụ Track A)
 
 ---
 
-## A.5 Mô Hình Năng Lực Kẻ Tấn Công (Adversary Capabilities)
+- #### TB2: Bytes từ peer chuyển thành điểm (U → Parse)
 
-| Mã ID | Vị Trí & Phương Thức | Năng Lực Khai Thác | Dữ Liệu Quan Sát Được | Giới Hạn Nghiêm Ngặt (Ngoài Phạm Vi) |
-| :---: | :--- | :--- | :--- | :--- |
-| **ATK-1** | **Remote, Passive (Thụ động từ xa)** | Nghe lén lưu lượng mạng công khai, thu thập chữ ký số phát hành | Tập hợp các bộ ba $(r_i, s_i, H(m_i))$, token JWT, public key | Không can thiệp đường truyền, không sửa gói tin, không truy cập bộ nhớ |
-| **ATK-2** | **Remote, Active (Chủ động tương tác - Oracle)** | Gửi các điểm tọa độ tùy ý, token malformed tới API endpoint | Mã phản hồi HTTP, thông điệp lỗi, thời gian phản hồi (Latency) | Bị cấm tấn công từ chối dịch vụ (DoS), không nhắm vào hệ thống ngoài phòng lab |
-| **ATK-3** | **Local Co-tenant (Cùng máy chủ)** | Chạy tiến trình cùng máy chủ ảo/container, đo đạc vi kiến trúc | Phân phối chu kỳ xung nhịp CPU (CPU cycles), tranh chấp cache | Không có quyền root, không can thiệp trực tiếp vào tiến trình mục tiêu |
-| **ATK-4** | **Physical / Lab (Vật lý - Tuỳ chọn)** | Gắn probe đo năng lượng hoặc sóng điện từ (EM) trên vi điều khiển | Traces dao động điện thế khi thực thi phép nhân vô hướng | Chỉ thực hiện trên board phần cứng của nhóm nghiên cứu |
-| **ATK-5** | **Supply-Chain Auditor** | Đánh giá phân tích mã nguồn và dependency graph | Danh mục CVE, mã nguồn upstream, commit lịch sử | Tuyệt đối không khai thác lỗ hổng 0-day chưa vá trên thực tế |
+**Mô tả:** Bytes nhận từ ngoài chưa phải là điểm. Đây là nơi lỗi biểu diễn xuất hiện, đặc biệt với Jacobian.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Khoảng giá trị | `x, y ∉ [0, p)` | Điểm không thuộc Fp, phép tính cho kết quả vô nghĩa |
+| Mã hóa | Hai chuỗi bytes khác nhau cùng ánh xạ một điểm | So sánh, lọc điểm sai |
+| Jacobian | Một điểm có nhiều biểu diễn `(λ²X, λ³Y, λZ)` | So từng thành phần cho kết quả sai |
+| `Z = 0` | Điểm vô cùng `(λ², λ³, 0)` lọt qua | Chia cho `Z²` hỏng, hoặc nhận `O` làm khóa của peer |
+| Chuyển đổi | Affine ↔ Jacobian sai (`x = X/Z²`, `y = Y/Z³`) | Điểm sau chuyển đổi lệch khỏi điểm gốc |
+
+**Tài sản cần bảo vệ:**
+- A12 (tính đúng của parse)
+- A24 (dữ liệu đi qua biên này)
+- A11 (gián tiếp, vì validate nhận đầu ra của parse)
+
+**Biện pháp:**
+- Kiểm range
+- Mã hóa chuẩn duy nhất
+- Từ chối hoặc xử lý riêng `Z = 0`
+- Chuẩn hóa về Affine trước khi validate
+- Từ chối `O` làm khóa công khai của peer
+
+> [!tip]
+**Test case gợi ý:** `x = p + 1`; `Z = 0`; `y = 0`; `−P` với `y = 0` (phải ra `(x, 0)`, không phải `(x, p)`).
 
 ---
 
-## A.6 Ma Trận Phân Tích Mối Đe Dọa Theo Tài Sản (STRIDE Matrix)
+- #### TB3: Validate điểm (Parse → Validate) — biên quan trọng nhất
 
-| Tài Sản Mục Tiêu | Mối Đe Dọa (Threat Description) | Phân Loại STRIDE | Yêu Cầu An Toàn Đặt Ra | Biện Pháp Khắc Phục Kỹ Thuật (Mitigation) |
-| :---: | :--- | :---: | :--- | :--- |
-| **A1** ($d_{\text{sign}}$) | Khôi phục khóa riêng từ các chữ ký số dùng chung nonce | **Information Disclosure** | Nonce $k$ phải duy nhất tuyệt đối và không thể dự đoán | Sử dụng RFC 6979 hoặc CSPRNG chuẩn; cài đặt bộ phát hiện `repeated_r` |
-| **A1** ($d_{\text{sign}}$) | Rò rỉ thông tin khóa qua độ lệch thời gian khi ký | **Information Disclosure** | Quá trình tính toán scalar multiplication phải đẳng thời | Lập trình Constant-time kết hợp Projective Coordinate Blinding |
-| **A2** ($d_{\text{dh}}$) | Khôi phục thặng dư khóa $d_{\text{dh}} \pmod{r_i}$ qua điểm giả mạo | **Information Disclosure** | Bắt buộc kiểm tra tính hợp lệ của điểm đối tác trước khi tính toán | Kiểm tra phương trình On-curve ($y^2 \equiv x^3+ax+b$) và kiểm tra Subgroup |
-| **A5** (Params) | Bị ép sử dụng đường cong tự tạo có cấp trơn hoặc kỳ dị | **Tampering** | Chỉ sử dụng các đường cong đã chuẩn hóa (Named Curves) | Allow-list các đường cong chuẩn (NIST/SECG); kiểm tra $\Delta \not\equiv 0 \pmod p$ |
-| **A6** (JWK) | Thay thế public key hoặc tráo đổi đường cong trong token | **Spoofing** | Xác thực nguồn gốc khóa và kiểm tra tương thích đường cong | Khóa cứng thuật toán (`alg` pinning) và đường cong (`crv` pinning) |
-| **A8** (Sig/Token) | Chấp nhận chữ ký non-canonical để bypass xác thực | **Spoofing / Repudiation** | Trình xác thực chữ ký phải kiểm tra nghiêm ngặt dạng chuẩn | Ép buộc $S < L$ trong Ed25519 (RFC 8032); ép buộc Low-$S$ trong secp256k1 |
-| **A12** (Oracle) | Thông điệp lỗi giải mã tiết lộ tính hợp lệ của điểm mật mã | **Information Disclosure** | Toàn bộ phản hồi lỗi phải đồng nhất và không rò rỉ trạng thái | Chuẩn hóa một mã lỗi duy nhất; thực thi phép toán giả để cân bằng thời gian |
-| **A14** (Build) | Triển khai thư viện chứa các CVE chưa được khắc phục | **Elevation of Privilege** | Quản lý phụ thuộc chặt chẽ và cập nhật bản vá bảo mật | Pin chính xác version thư viện; đối chiếu cơ sở dữ liệu SBOM |
+**Mô tả:** Là chốt chặn duy nhất giữa dữ liệu không tin cậy và phép nhân với `d`. Công thức cộng và nhân đôi **không dùng `b`**: máy tính vẫn tính `d·Q'` trơn tru với điểm của đường cong `y² = x³ + ax + b'` bất kỳ, không báo lỗi.
+
+| Tiêu chí | Invalid-curve attack | Small-subgroup attack |
+|---|---|---|
+| `Q'` nằm trên | Đường cong **khác** (cùng `a`, khác `b'`) | Đúng đường cong của bạn |
+| Điều kiện cần | Validate thiếu kiểm phương trình | `h > 1` |
+| `Q'` có bậc | `rᵢ` nhỏ, ước của `#E'` | `rᵢ` nhỏ, ước của `h` |
+| Chặn bằng | Kiểm `y² ≡ x³ + ax + b (mod p)` | Kiểm `n·Q' = O`, hoặc nhân với `h` |
+
+**Tóm tắt cơ chế:** Tính `d·Q'` với `Q'` bậc `rᵢ` nhỏ nên kết quả chỉ phụ thuộc `d mod rᵢ` → ghép nhiều `rᵢ` bằng CRT thì khôi phục `d`.
+
+**Điểm tinh tế:** Kiểm on-curve chặn invalid-curve nhưng **không** chặn small-subgroup, vì điểm đó vẫn on-curve. Nếu `h = 1` thì mọi điểm on-curve đã thuộc nhóm bậc `n`, không còn nhóm con nhỏ.
+
+> [!important]
+> **Trọng tâm kiến trúc:** point validation và subgroup validation là **yêu cầu mật mã** (NIST SP 800-56A), không phải việc làm sạch đầu vào thông thường. Việc ngộ nhận "dữ liệu qua biên này đã sạch" là nguyên nhân của nhiều CVE, ví dụ CVE-2015-7940 (Bouncy Castle) và CVE-2016-9121 (go-jose). Danh mục đầy đủ xem Phần B (B.4).
+
+**Tài sản cần bảo vệ:** A01, A02, A11, cùng A07 và A08 (`n`, `h` là đầu vào của bước kiểm).
+
+**Biện pháp:**
+Kiểm đủ chuỗi:
+range → on-curve → khác `O` → `n·Q' = O` (hoặc nhân cofactor).
+> [!important]
+***Từ chối điểm sai thay vì "sửa".***
 
 ---
 
-## A.7 Phạm Vi Ngoài Nghiên Cứu (Out-of-Scope Guardrails)
+- #### TB4: Điểm đã hợp lệ đi vào lõi số học (Validate → Z3)
 
-> [!CAUTION]
-> **Nguyên tắc an toàn học thuật và pháp lý:**
-> 1. **Không tuyên bố phá vỡ các đường cong tiêu chuẩn:** Đề tài tuyệt đối không tuyên bố "bẻ gãy" các đường cong chuẩn kích thước đầy đủ (NIST P-256, SECG secp256k1, Ed25519). Các đường cong này đóng vai trò là **mẫu đối chứng âm (Negative Controls)** để chứng minh rằng khi triển khai đúng quy chuẩn, hệ thống hoàn toàn an toàn.
-> 2. **Cấm tấn công môi trường thực tế:** Nghiêm cấm mọi hành vi thử nghiệm trên mạng blockchain public, các endpoint JWT thương mại ngoài phạm vi lab, hoặc sử dụng khóa riêng của hệ thống production.
-> 3. **Loại trừ tấn công lượng tử:** Thuật toán Shor giải quyết ECDLP trong thời gian đa thức trên máy tính lượng tử lý thuyết được ghi nhận là xu hướng tương lai nhưng nằm ngoài phạm vi thực nghiệm kỹ thuật của đề tài này.
+**Mô tả:** Sau validate, điểm được tin và nhân với `d`. Biên này bảo vệ độ đúng của lõi và tính bí mật của `d` trong lúc tính.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Công thức cộng | Quên rẽ nhánh `P = Q` (phải dùng công thức tiếp tuyến) | Chia cho 0 hoặc kết quả sai |
+| Trường hợp biên | `P + (−P)`, `2P` với `y = 0` phải ra `O`; `P + O = P` | Kết quả sai ở các điểm đặc biệt |
+| Nghịch đảo | `−P = (x, p − y)` sai khi `y = 0` | Ra giá trị `p` ngoài range |
+| Double-and-add | Rẽ nhánh theo bit của `d` | Thời gian chạy lộ thông tin về `d` (side-channel, ngoài phạm vi, xem mục 7) |
+| RNG | `d` hoặc ephemeral key không đủ ngẫu nhiên | Đoán được `d` mà không cần giải ECDLP |
+| Dữ liệu `d` | `d` nằm trong log, lỗi, hoặc biến debug | Lộ trực tiếp |
+
+**Tài sản cần bảo vệ:** A01, A03, A13.
+
+**Biện pháp:**
+- Xử lý mọi trường hợp biên
+- Kiểm thử đối chiếu độc lập
+- Không ghi `d` ra log
+
+---
+
+- #### TB5: Kết quả trả ra ngoài (Z3 → Oracle → Attacker)
+
+**Mô tả:** Oracle là phần kết quả mà attacker quan sát được, là biến điều khiển lớn nhất của các thí nghiệm kiểm thử điểm invalid và small-subgroup. Với Track C, đây cũng là nơi chữ ký lộ ra ngoài.
+
+| Oracle trả về | Thông tin mỗi lượt | Hệ quả |
+|---|---|---|
+| Shared secret `d·Q'` đầy đủ | `d mod rᵢ` trực tiếp | Mạnh nhất, tấn công nhanh nhất |
+| MAC hoặc ciphertext | Dùng để kiểm một giá trị đoán `d mod rᵢ` | Thử tối đa `rᵢ` khả năng, vẫn khả thi |
+| Chỉ thành công/thất bại hoặc mã lỗi | Khoảng 1 bit | Cần nhiều truy vấn hơn |
+| Thông báo lỗi phân biệt (sai range / sai curve / sai bậc) | Cho attacker biết bước validate nào bị vượt qua | Giúp dò logic phòng thủ |
+| Thời gian phản hồi | Phụ thuộc cài đặt | Side-channel, ngoài phạm vi |
+| Chữ ký `(r, s)` / JWT | Hai chữ ký có cùng `r` thì lộ `k`, rồi lộ `d` | Khôi phục khóa ký (Track C) |
+| Số truy vấn không bị giới hạn | Attacker gửi lặp không bị chặn | Thu đủ thặng số `d mod rᵢ`; số truy vấn là thước đo ghi vào D6 |
+
+**Tài sản cần bảo vệ:** A01, A02, A21, A25.
+
+**Biện pháp:**
+- Trả lỗi đồng nhất (một mã lỗi duy nhất cho mọi trường hợp validate thất bại)
+- Không lộ raw shared secret
+- Dùng khóa ephemeral hoặc từ chối khi validate thất bại
+- Giới hạn tốc độ và số truy vấn trên mỗi khách (làm chậm tấn công, không thay thế validate)
+
+---
+
+- #### TB6: Toy curve và curve chuẩn (Lab ↔ Thực tế)
+
+**Mô tả:** Không phải biên kỹ thuật mà là biên **diễn giải kết quả**. Toy curve và smooth curve yếu có chủ đích; P-256 và X25519 là mức an toàn thực.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Phạm vi kết luận | Báo cáo không tách toy khỏi chuẩn | Bị hiểu thành "ECC không an toàn" |
+| Negative control | Chỉ chạy tấn công mà không chạy đối chứng | Không chứng minh được lỗ hổng nằm ở triển khai |
+| P-256 | `h = 1`, nên kiểm on-curve và `n·Q' = O` là đủ | Dùng làm đối chứng cho Weierstrass |
+| X25519 | Montgomery, cofactor 8, chỉ trao đổi tọa độ `x` | Cách phòng thủ khác Weierstrass (clamping khóa, xử lý điểm bậc thấp, twist) |
+
+**Tài sản cần bảo vệ:** A19 (tham số curve chuẩn, toàn vẹn), và tính đúng đắn của kết luận.
+
+> [!Attention]
+**Lưu ý:** Tấn công thành công là do curve yếu có chủ đích, triển khai thiếu validate; negative control cho thấy triển khai đúng thì không rò rỉ.
+
+---
+
+- #### TB7: Pipeline dữ liệu (Lab nội bộ)
+
+**Mô tả:** Liên quan **tái lập kết quả**, không liên quan bí mật. Luồng theo checklist: D1 (toy curve) → D2 (benchmark) → D3 → D4 → D6 → báo cáo. Schema chung chốt ở T2.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Seed | Không cố định khi sinh toy curve | Không tái lập được D1 |
+| Môi trường đo | Phần cứng, tải máy, phiên bản thay đổi | Nhiễu làm lẫn `O(n)` và `O(√n)` |
+| Số lần đo | Đo một lần | Kết luận độ phức tạp thiếu tin cậy |
+| Schema | Cột, kiểu dữ liệu không thống nhất | Phân tích sai |
+| Ground-truth `d` | Lẫn vào dữ liệu công khai khi chạy tấn công | Tấn công "nhìn thấy" đáp án |
+
+**Tài sản cần bảo vệ:** A14, A15, A16, A17, A18.
+
+**Biện pháp:**
+- Cố định seed, ghi phiên bản thư viện và phần cứng
+- Đo nhiều lần lấy trung vị
+- Tách ground-truth khỏi dữ liệu đưa cho script tấn công
+- Dữ liệu khớp `schema_definition.json`
+
+---
+
+- #### TB8: Nguồn nonce vào Signer (RNG / RFC 6979 → Z3)
+
+**Mô tả:** Ranh giới riêng của Track C: bí mật `d` không bị phá bằng ECDLP mà bằng việc `k` lặp hoặc đoán được.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| `k` cố định hoặc lặp | Hai chữ ký cùng `k` thì cùng `r` | Giải được `k`, rồi `d` |
+| RNG yếu | `k` đoán được | Khôi phục `d` từ một chữ ký |
+| RFC 6979 | Nonce xác định từ `d` và thông điệp | Không lặp với thông điệp khác nhau; là bản vá |
+| Signer thí nghiệm | Cố ý đặt `k` cố định để minh họa lỗ hổng | Phải đánh dấu rõ là lỗ hổng có chủ đích |
+
+**Tài sản cần bảo vệ:** A20, A03, A01.
+
+**Biện pháp:**
+- Dùng RFC 6979 hoặc CSPRNG
+- Không ghi `k` ra log
+- Có bước phát hiện `r` trùng nhau trên tập chữ ký
+
+---
+
+- #### TB9: Sandbox demo ↔ môi trường ngoài (Lab → Mạng ngoài)
+
+**Mô tả:** Biên cô lập và đạo đức: hai service demo cố ý có lỗ hổng, không được ảnh hưởng hệ thống thật.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Phơi service lỗi ra mạng | `ecdh-api`, `jwt-es256` bản lỗi truy cập được từ ngoài | Bị khai thác thật |
+| Tái dùng khóa | Khóa/token demo trùng khóa ở hệ thống thật | Lộ khóa thật |
+| Đích của script tấn công | Script trỏ nhầm sang hệ thống không thuộc nhóm | Vi phạm phạm vi cho phép |
+| Bản vá | Bản vá không được re-test | Kết luận "đã vá" không có bằng chứng |
+
+**Tài sản cần bảo vệ:** A22, A01 (khóa demo), A18.
+
+**Biện pháp:**
+- Chạy trong Docker/sandbox, bind `localhost`
+- Khóa demo sinh riêng
+- Script chỉ nhắm đích cấu hình sẵn
+- Re-test bản vá
+
+---
+
+- #### TB10: Lưu trữ và vòng đời khóa (Z3 ↔ Z5)
+
+**Mô tả:** Biên giữa lõi mật mã và nơi giữ khóa dài hạn (tệp, biến môi trường, tiến trình khác), cùng vòng đời khóa (`kid`, thu hồi, xoay khóa). Khóa nằm sai chỗ thì kẻ tấn công lấy được mà không cần tấn công mật mã.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Nơi lưu khóa | `d` nằm trong mã nguồn, tệp cấu hình hoặc biến môi trường dễ đọc | Lộ trực tiếp |
+| Bộ nhớ tiến trình | Khóa, nonce còn trong bộ nhớ sau khi dùng; tiến trình khác đọc được | Đọc trộm, dump tiến trình |
+| Log và debug | `d`, `k` ghi ra log hoặc thông báo lỗi | Lộ trực tiếp |
+| Vòng đời khóa | Verifier vẫn chấp nhận khóa cũ hoặc đã lộ; `kid` không được ghim | Khóa đã lộ vẫn dùng để giả mạo; bị ép quay về khóa cũ |
+
+**Tài sản cần bảo vệ:** A01, A23 (chính); A02, A20 (gián tiếp, vì nằm trong bộ nhớ tiến trình).
+
+**Biện pháp:**
+- Tách khóa khỏi mã nguồn, không commit khóa demo
+- Không ghi `d`, `k` ra log
+- Xoay khóa (key rotation) và ghim `kid` ở bản vá
+- Đề xuất theo file mẫu: giả lập HSM bằng tiến trình riêng qua Unix Domain Socket (cần xác nhận)
+
+> [!attention]
+> **Lưu ý:** Python không đảm bảo xóa khóa khỏi bộ nhớ sau khi dùng; ghi nhận là rủi ro còn dư.
+
+---
+
+- #### TB11: Chuỗi cung ứng (Kho gói công cộng → Lab)
+
+**Mô tả:** Thư viện và image đi vào môi trường lab. Biên này ảnh hưởng **tái lập** và **tính đúng của kết luận**, vì nhiều lỗ hổng chỉ tồn tại ở một số phiên bản.
+
+| Yếu tố | Vấn đề | Hệ quả |
+|---|---|---|
+| Phiên bản thư viện | Không cố định (pin) | Kết quả khác nhau giữa các lần cài; kết luận về lỗ hổng sai |
+| Thư viện có lỗi đã biết | Bản lab vô tình dùng thư viện có CVE chưa vá | Lỗ hổng ngoài ý muốn lẫn với lỗ hổng cố ý |
+| Image nền | Image Docker thay đổi theo thời gian | Không tái lập được trên môi trường sạch |
+
+**Tài sản cần bảo vệ:** A18 (chính); A22 (gián tiếp).
+
+**Biện pháp:**
+- Pin phiên bản (requirements/lock file), cố định image Docker
+- Ghi phiên bản thư viện vào kết quả đo
+- Đối chiếu CVE của thư viện trước khi dùng cho negative control
+
+### 4. Ma trận tài sản × ranh giới
+
+● = Bảo vệ chính tại biên đó
+○ = Liên quan gián tiếp
+
+| Tài sản | TB1 | TB2 | TB3 | TB4 | TB5 | TB6 | TB7 | TB8 | TB9 | TB10 | TB11 |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| A01 Khóa bí mật `d` | | | ● | ● | ● | | | ○ | ○ | ● | |
+| A02 Shared secret / khóa phiên | | | ● | ○ | ● | | | | | ○ | |
+| A03 RNG | | | | ● | | | | ● | | | |
+| A04 `p` | ● | | | | | | | | | | |
+| A05 `a, b`, điều kiện `Δ` | ● | | ○ | | | | | | | | |
+| A06 `#E` | ● | | | | | | | | | | |
+| A07 `n` | ● | | ○ | | | | | | | | |
+| A08 `h` | ● | | ○ | | | | | | | | |
+| A09 `G` | ● | | | | | | | | | | |
+| A10 `Q` công khai / JWK | ○ | ○ | | | | | | | | | |
+| A11 Hàm validate | | ○ | ● | | | | | | | | |
+| A12 Parse / Affine ↔ Jacobian | | ● | ○ | | | | | | | | |
+| A13 Lõi số học | | | | ● | | | | | | | |
+| A14 D1 | | | | | | | ● | | | | |
+| A15 D2 | | | | | | | ● | | | | |
+| A16 D3, D4, D6, schema | | | | | | | ● | | | | |
+| A17 Ground-truth `d` | | | | | ○ | | ● | | | | |
+| A18 Script, seed, môi trường | | | | | | | ● | | ○ | | ● |
+| A19 Curve chuẩn (đối chứng) | | | | | | ● | | | | | |
+| A20 Nonce `k` | | | | ○ | ○ | | | ● | | ○ | |
+| A21 Chữ ký `(r,s)`, JWT | | | | | ● | | ○ | ○ | | | |
+| A22 Service demo | | | | | ○ | | | | ● | | ○ |
+| A23 Metadata vòng đời khóa | | | | | | | | | | ● | |
+| A24 Điểm `Q'` từ peer | | ● | ○ | | | | | | | | |
+| A25 Phản hồi lỗi (oracle) | | | | | ● | | | | | | |
+
+**Nhận xét:**
+- `d` (A01) được bảo vệ tại ba biên liên tiếp TB3, TB4, TB5, tại TB10 (nơi lưu trữ) và gián tiếp tại TB8 (qua nonce); chỉ cần một biên hỏng là khóa có thể lộ, nên cần "phòng thủ nhiều lớp".
+- TB3 có nhiều tài sản phụ thuộc nhất (A01, A02, A05, A07, A08, A11, A12, A24), nên lỗi ở đây ảnh hưởng lớn nhất.
+- TB1 phụ thuộc việc tham số có được kiểm hay không; ở toy curve biên này bị bỏ ngỏ có chủ đích.
+- TB7, TB9 và TB11 không bảo vệ bí mật mà bảo vệ độ tin cậy của kết luận và an toàn khi trình diễn.
+
+### 5. Mô hình kẻ tấn công (Adversary)
+
+| Mã | Vị trí và phương thức | Năng lực | Dữ liệu quan sát được | Ranh giới liên quan | Phạm vi |
+|:-:|---|---|---|---|:-:|
+| **ATK-1** | Remote, thụ động | Nghe lén lưu lượng công khai, thu thập chữ ký số phát hành | Các bộ `(rᵢ, sᵢ, H(mᵢ))`, token JWT, public key | TB5, TB8 | Trong |
+| **ATK-2** | Remote, chủ động (oracle) | Gửi điểm tùy ý hoặc token sai định dạng tới API | Mã phản hồi, thông điệp lỗi (thời gian phản hồi: ngoài phạm vi) | TB1, TB2, TB3, TB5 | Trong |
+| **ATK-3** | Local co-tenant | Chạy tiến trình cùng máy, đo vi kiến trúc (cache, cycles) | Phân phối chu kỳ CPU, tranh chấp cache | TB4 | Ngoài |
+| **ATK-4** | Vật lý (tùy chọn) | Đo năng lượng hoặc sóng điện từ trên vi điều khiển | Dấu vết điện thế khi nhân vô hướng | TB4 | Ngoài |
+| **ATK-5** | Kiểm toán chuỗi cung ứng | Phân tích mã nguồn và đồ thị phụ thuộc | Danh mục CVE, mã nguồn upstream, lịch sử commit | TB11 | Trong (chỉ phân tích) |
+
+**Giới hạn của từng kẻ tấn công:**
+- ATK-1: không can thiệp đường truyền, không sửa gói tin, không truy cập bộ nhớ.
+- ATK-2: không tấn công từ chối dịch vụ (DoS), không nhắm vào hệ thống ngoài phòng lab.
+- ATK-5: không khai thác lỗ hổng 0-day chưa vá trên thực tế.
+
+### 6. Ma trận mối đe dọa theo tài sản (STRIDE)
+
+| Tài sản | Mối đe dọa | STRIDE | Yêu cầu an toàn | Biện pháp |
+|:-:|---|:-:|---|---|
+| A01, A20 | Khôi phục khóa riêng từ các chữ ký dùng chung nonce | Information Disclosure | Nonce `k` duy nhất và không đoán được | RFC 6979 hoặc CSPRNG; bộ phát hiện `r` trùng nhau |
+| A01 | Dùng khóa đã khôi phục để giả mạo JWT admin | Spoofing | Khóa ký chỉ do server nắm giữ | Xoay khóa, thu hồi khóa cũ, re-test bản vá |
+| A01, A02 | Khôi phục `d mod rᵢ` qua điểm giả mạo (invalid-curve) | Information Disclosure | Kiểm tra điểm của peer trước khi tính | Kiểm on-curve và subgroup, từ chối điểm sai |
+| A04–A09 | Bị ép dùng đường cong tự tạo có cấp trơn hoặc kỳ dị | Tampering | Chỉ dùng đường cong chuẩn có tên | Allow-list đường cong; kiểm `Δ ≢ 0 (mod p)` |
+| A10 | Thay khóa công khai hoặc đổi `crv` trong token | Spoofing | Xác thực nguồn khóa và tương thích đường cong | Ghim `alg` và `crv` |
+| A23 | Ép hệ thống quay về dùng khóa cũ hoặc đã lộ | Tampering | Verifier chỉ tin khóa còn hiệu lực | Ghim `kid`, thu hồi khóa, key rotation |
+| A25 | Thông điệp lỗi tiết lộ bước validate nào bị vượt qua | Information Disclosure | Phản hồi lỗi đồng nhất, không rò rỉ trạng thái | Một mã lỗi duy nhất, giới hạn số truy vấn |
+| A18 | Triển khai thư viện chứa CVE chưa được khắc phục | Elevation of Privilege | Quản lý phụ thuộc chặt chẽ | Pin phiên bản, đối chiếu CVE, Docker cố định |
+
+STRIDE: **S**poofing, **T**ampering, **R**epudiation, **I**nformation Disclosure, **D**enial of Service, **E**levation of Privilege. Hai loại Repudiation và DoS chưa có dòng nào vì không thuộc Track A, C, D.
+
+### 7. Các vấn đề ngoài phạm vi
+
+> [!Attention]
+> - Side-channel thời gian và cache (liên quan đến constant-time; tương ứng ATK-3, ATK-4).
+> - Tấn công vật lý, tấn công lên hạ tầng mạng/TLS, lỗi nội tại của thư viện chuẩn (chỉ ghi nhận và cố định phiên bản, xem TB11).
+> - Hiệu năng tuyệt đối trên phần cứng thật (chỉ đo lường tương đối trên cùng cấu hình).
+> - **Không tuyên bố phá các đường cong chuẩn** (P-256, X25519, secp256k1): chúng là mẫu đối chứng âm (negative control) để cho thấy triển khai đúng thì an toàn.
+> - **Không tấn công môi trường thực tế:** không thử nghiệm trên mạng công khai, endpoint JWT thương mại hoặc khóa production; script chỉ nhắm đích lab đã cấu hình sẵn.
+> - **Không tấn công từ chối dịch vụ (DoS)** lên service demo.
+> - **Không khai thác 0-day chưa vá** trên thực tế.
+> - **Tấn công lượng tử** (thuật toán Shor giải ECDLP trong thời gian đa thức trên máy lượng tử lý thuyết) được ghi nhận là xu hướng tương lai, nằm ngoài thực nghiệm của đề tài.
 
 ---
 
