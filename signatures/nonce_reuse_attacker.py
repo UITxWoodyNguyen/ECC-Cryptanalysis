@@ -152,24 +152,28 @@ def recover_d_from_pair(
 
 
 # ---------------------------------------------------------------------------
-# 2. Gom nhóm theo r — phiên bản tối giản dùng nội bộ
+# 2. Gom nhóm theo r — dùng signatures/repeated_r_detector.py (đã có)
 # ---------------------------------------------------------------------------
 #
-# LƯU Ý: đây CHỈ là phần gom nhóm tối thiểu để module này tự dùng được ngay
-# (dict r -> [chữ ký], O(N)). Bộ dò quét quy mô lớn trên một luồng chữ ký
-# liên tục (streaming, nhiều khóa cùng lúc) là việc của
-# `signatures/repeated_r_detector.py` — khi file đó có, có thể thay bước này
-# bằng kết quả của nó (interface tương thích: dict r -> list chữ ký).
+# Trước khi repeated_r_detector.py tồn tại, module này tự chứa 1 bộ gom
+# nhóm tối giản (dict r -> [chữ ký], O(N)). Giờ thay bằng module chuyên
+# trách đó — interface tương thích 100%, hành vi KHÔNG đổi:
+# group_by_key=False để giữ đúng cách nhóm "chỉ theo r" đã dùng trước đây
+# (ca biên 5.3 — nhóm r lẫn 2 khóa khác nhau — vẫn được lọc đúng ở bước
+# xác nhận public_key tại recover_private_key(), không phải ở bước gom
+# nhóm này).
 
-def _normalize_r(sig: SignatureLike) -> str:
-    return str(_field(sig, "r"))
+try:
+    from signatures.repeated_r_detector import detect_repeated_r  # type: ignore
+except ImportError as exc:  # pragma: no cover
+    raise ImportError(
+        "nonce_reuse_attacker.py cần signatures/repeated_r_detector.py cùng project-root. "
+        f"Lỗi gốc: {exc}"
+    ) from exc
 
 
 def _group_by_r(signatures: Sequence[SignatureLike]) -> Dict[str, List[SignatureLike]]:
-    groups: Dict[str, List[SignatureLike]] = defaultdict(list)
-    for sig in signatures:
-        groups[_normalize_r(sig)].append(sig)
-    return {r: sigs for r, sigs in groups.items() if len(sigs) >= 2}
+    return detect_repeated_r(signatures, group_by_key=False).repeated_groups()
 
 
 # ---------------------------------------------------------------------------
