@@ -3,15 +3,23 @@ scripts/generate_d3_corpus.py
 ================================
 
 Sinh data/D3_signatures.csv từ signatures/base_signer.py +
-signatures/vulnerable_signer.py, tính ground-truth repeated_r, QA bằng
-signatures/nonce_reuse_attacker.py, rồi mới ghi CSV.
+signatures/vulnerable_signer.py + signatures/rfc6979_signer.py (bản vá),
+tính ground-truth repeated_r, QA bằng signatures/nonce_reuse_attacker.py +
+signatures/repeated_r_detector.py, rồi mới ghi CSV.
 
 Chạy: python3 scripts/generate_d3_corpus.py   (từ project-root)
 
 Yêu cầu: project-root/{signatures/base_signer.py,
                        signatures/vulnerable_signer.py,
+                       signatures/rfc6979_signer.py,
                        signatures/nonce_reuse_attacker.py,
+                       signatures/repeated_r_detector.py,
                        data/schema_definition.json}
+
+Corpus gồm 6 run (5 chế độ lỗi F1–F4 + đối chứng random_ok, cộng 1 run bản
+vá RFC 6979) — xem bảng RUNS bên dưới. Mỗi lần chạy lại sinh khóa/nonce mới
+hoàn toàn (không cố định seed cấp cao nhất), nên ra corpus khác về giá trị
+nhưng cùng phân bố/thuộc tính thống kê.
 """
 
 import sys
@@ -28,6 +36,7 @@ from signatures.base_signer import (
     BaseECDSASigner, RandomNonceStrategy, new_lab_key_id, get_git_commit,
 )
 from signatures.vulnerable_signer import make_vulnerable_signer
+from signatures.rfc6979_signer import RFC6979NonceStrategy
 from signatures.nonce_reuse_attacker import recover_private_key
 
 CURVE = "P-256"
@@ -40,18 +49,23 @@ FIELDNAMES = [
 ]
 
 # (run_id, mode, n_sigs hoặc None nếu mode='reuse_restart', strategy_kwargs)
+# mode="rfc6979": bản ĐÃ VÁ — thêm 2 chữ ký TRÙNG THÔNG ĐIỆP có chủ đích để
+# minh hoạ ca biên 5.1 (nonce_theory.md §5.1): deterministic + cùng msg ⇒
+# cùng r (repeated_r=True thật) nhưng KHÔNG lộ gì (e1=e2, QA phải THẤT BẠI
+# khi thử khôi phục — ngược lại hoàn toàn so với 5 mode còn lại).
 RUNS = [
     ("run-c-ctrl-random",   "random_ok",      50,   {}),
     ("run-c-f1-constant",   "reuse_constant", 25,   {"seed": 101}),
     ("run-c-f2-restart",    "reuse_restart",  None, {"seed_space_bits": 3, "seed": 202}),
     ("run-c-f3-sparse",     "reuse_sparse",   70,   {"rho": 0.3, "seed": 303}),
     ("run-c-f4-lowentropy", "low_entropy",    90,   {"entropy_bits": 12, "seed": 404}),
+    ("run-c-rfc6979-safe",  "rfc6979",        60,   {}),
 ]
 RESTART_EPOCHS = 18      # > 2^seed_space_bits=8 -> chắc chắn có trùng (chuồng bồ câu)
 RESTART_SIGS_PER_EPOCH = 2
 
 
-def _gen_msg(run_id: str, idx: int) -> bytes:
+def _gen_msg(run_id: str, idx) -> bytes:
     return f"{run_id}:{idx}:{secrets.token_hex(4)}".encode()
 
 
@@ -59,13 +73,16 @@ def _make_signer(mode: str, key_id: str, d_true: int, kwargs: dict):
     if mode == "random_ok":
         return BaseECDSASigner(curve=CURVE, private_key=d_true, key_id=key_id,
                                 signer_version="random_ok", nonce_strategy=RandomNonceStrategy())
+    if mode == "rfc6979":
+        return BaseECDSASigner(curve=CURVE, private_key=d_true, key_id=key_id,
+                                signer_version="rfc6979", nonce_strategy=RFC6979NonceStrategy())
     return make_vulnerable_signer(mode, curve=CURVE, private_key=d_true, key_id=key_id,
                                    strategy_kwargs=kwargs)
 
 
 def collect_run(run_id: str, mode: str, n_sigs, kwargs: dict):
     d_true = secrets.randbelow(2 ** 256)
-    key_id = new_lab_key_id("ctrl" if mode == "random_ok" else mode)
+    key_id = new_lab_key_id("ctrl" if mode in ("random_ok", "rfc6979") else mode)
     signer = _make_signer(mode, key_id, d_true, kwargs)
 
     sigs = []
@@ -83,6 +100,14 @@ def collect_run(run_id: str, mode: str, n_sigs, kwargs: dict):
         for idx in range(n_sigs):
             sig = signer.sign(_gen_msg(run_id, idx))
             sigs.append((idx, sig))
+
+    if mode == "rfc6979":
+        # Thêm có chủ đích 2 chữ ký TRÙNG THÔNG ĐIỆP (ca biên 5.1) để minh
+        # hoạ: deterministic vẫn cho repeated_r=True thật khi ký trùng msg,
+        # nhưng không lộ gì — khác hẳn ý nghĩa "repeated_r" ở 5 run kia.
+        dup_msg = _gen_msg(run_id, "dup")
+        sigs.append((n_sigs, signer.sign(dup_msg)))
+        sigs.append((n_sigs + 1, signer.sign(dup_msg)))
 
     return key_id, d_true, signer, sigs
 
@@ -116,6 +141,16 @@ def qa_check(run_id: str, mode: str, signer, sigs, d_true: int) -> bool:
         return len(dup) == 0
 
     sig_objs = [s for _, s in sigs]
+
+    if mode == "rfc6979":
+        # Ngược lai voi 5 mode kia: PASS khi KHONG khoi phuc duoc, du co
+        # dung 1 nhom repeated_r=True (cap trung thong diep co y, e1=e2).
+        res = recover_private_key(signer.curve, sig_objs, public_key=signer.public_key)
+        ok = (res.success is False)
+        print(f"  [{run_id}] mode={mode:16s} an_toan_du_co_repeated_r={ok} "
+              f"(groups={res.groups_examined}, pairs={res.pairs_examined})")
+        return ok
+
     res = recover_private_key(signer.curve, sig_objs, public_key=signer.public_key)
     ok = bool(res.success and res.d == d_true and res.verified_by_public_key)
     print(f"  [{run_id}] mode={mode:16s} recovered_d_correct={ok} "
