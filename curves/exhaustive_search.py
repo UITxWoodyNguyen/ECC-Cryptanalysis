@@ -14,5 +14,4 @@ def exhaustive_search(P: Point, Q: Point, bounds: int) -> int:
         if R == P:
             return n
         R = R + Q
-
     raise ValueError(f"Value not found within bounds (1..{bounds}). Increase bounds.")
