@@ -1,10 +1,18 @@
-import sys
-from curves.ecc import *
-def Exhaustive_search(P: Point, Q:Point, Bounds: int)-> int:
-    # P = n.Q
-    n=1
-    while n < Bounds:
-        if (P == n*Q):
-            return n
-        n+=1
+from curves.ecc import Point
 
+
+def exhaustive_search(P: Point, Q: Point, bounds: int) -> int:
+    if P.curve != Q.curve:
+        raise ValueError("P and Q must be on the same curve")
+    if P.is_infinity:
+        return 0
+    if Q.is_infinity:
+        raise ValueError("Generator point Q cannot be at infinity")
+
+    R = Q
+    for n in range(1, bounds + 1):
+        if R == P:
+            return n
+        R = R + Q
+
+    raise ValueError(f"Value not found within bounds (1..{bounds}). Increase bounds.")

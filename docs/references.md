@@ -216,3 +216,5 @@ graph TD
 2. **Không sao chép nguyên văn (Paraphrasing):** Không sao chép các đoạn văn dài từ tiêu chuẩn. Tất cả nội dung phải được diễn đạt lại bằng ngôn ngữ phân tích kỹ thuật của nhóm, kèm theo số điều/mục cụ thể khi trích dẫn định lý hoặc công thức.
 3. **Cấu trúc tuyên bố lỗ hổng (Vulnerability Assertion):** Mọi phát biểu về một lỗ hổng bảo mật trong báo cáo bắt buộc phải cung cấp tối thiểu 6 trường thông tin chuẩn hóa:
    $$\text{Tuple} = \langle \text{Mã CVE}, \text{Tên gói phần mềm}, \text{Phiên bản bị lỗi}, \text{Phiên bản đã vá}, \text{Phân loại CWE}, \text{Nguồn kiểm chứng} \rangle$$
+
+   
