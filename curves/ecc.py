@@ -1,19 +1,26 @@
 from math import isqrt
 import random
 from cryptography.hazmat.primitives.asymmetric import ec
-from fastecdsa.curve import P192, P224, P256, P384, P521, secp256k1
+try:
+    from fastecdsa.curve import P192, P224, P256, P384, P521, secp256k1
 
-# 1. Map tham số từ fastecdsa sang (object OpenSSL, bậc nhóm q)
-_OPENSSL_CURVES: dict[tuple[int, int, int], tuple[ec.EllipticCurve, int | None]] = {
-    (c.a % c.p, c.b % c.p, c.p): (openssl_c, c.q)
-    for c, openssl_c in [
-        (P224, ec.SECP224R1()),
-        (P256, ec.SECP256R1()),
-        (P384, ec.SECP384R1()),
-        (P521, ec.SECP521R1()),
-        (secp256k1, ec.SECP256K1()),
+    # 1. Map tham số từ fastecdsa sang (object OpenSSL, bậc nhóm q)
+    _CANDIDATE_CURVES = [
+        (P192, getattr(ec, "SECP192R1", None)),
+        (P224, getattr(ec, "SECP224R1", None)),
+        (P256, getattr(ec, "SECP256R1", None)),
+        (P384, getattr(ec, "SECP384R1", None)),
+        (P521, getattr(ec, "SECP521R1", None)),
+        (secp256k1, getattr(ec, "SECP256K1", None)),
     ]
-}
+
+    _OPENSSL_CURVES: dict[tuple[int, int, int], tuple[ec.EllipticCurve, int | None]] = {
+        (c.a % c.p, c.b % c.p, c.p): (openssl_cls(), c.q)
+        for c, openssl_cls in _CANDIDATE_CURVES
+        if openssl_cls is not None
+    }
+except ImportError:
+    _OPENSSL_CURVES = {}
 
 
 def register_openssl_curve(
@@ -22,6 +29,206 @@ def register_openssl_curve(
     """Đăng ký thêm curve mới (kèm bậc nhóm order nếu biết để FindOrder chạy tức thì)."""
     _OPENSSL_CURVES[(a % p, b % p, p)] = (openssl_curve, order)
 
+
+# ======= NUMBER THEORY HELPERS (Public cho toàn dự án) ============
+
+_MR_BASES = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)
+
+
+def is_prime(n: int) -> bool:
+    """Kiểm tra nguyên tố bằng Miller-Rabin tất định (chính xác tới n < 3.3e24)."""
+    if n < 2:
+        return False
+    for q in _MR_BASES:
+        if n % q == 0:
+            return n == q
+    d, s = n - 1, 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+    for a in _MR_BASES:
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(s - 1):
+            x = x * x % n
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def random_prime(rng: random.Random, bits: int) -> int:
+    """Số nguyên tố ngẫu nhiên có đúng `bits` bit."""
+    if bits < 8:
+        raise ValueError("bits phải >= 8 cho toy curve")
+    while True:
+        cand = rng.getrandbits(bits) | (1 << (bits - 1)) | 1
+        if is_prime(cand):
+            return cand
+
+def sqrt_mod(n: int, p: int) -> int | None:
+    """Tính căn bậc hai modulo p nguyên tố lẻ bằng Tonelli-Shanks; trả về None nếu không tồn tại."""
+    n %= p
+    if n == 0:
+        return 0
+    if pow(n, (p - 1) // 2, p) != 1:
+        return None
+    if p % 4 == 3:
+        return pow(n, (p + 1) // 4, p)
+    q, s = p - 1, 0
+    while q % 2 == 0:
+        q //= 2
+        s += 1
+    z = 2
+    while pow(z, (p - 1) // 2, p) != p - 1:
+        z += 1
+    m, c, t, r = s, pow(z, q, p), pow(n, q, p), pow(n, (q + 1) // 2, p)
+    while t != 1:
+        i, t2 = 0, t
+        while t2 != 1:
+            t2 = t2 * t2 % p
+            i += 1
+        b = pow(c, 1 << (m - i - 1), p)
+        m, c = i, b * b % p
+        t, r = t * c % p, r * b % p
+    return r
+
+
+def _gcd_binary(a: int, b: int) -> int:
+    a, b = abs(a), abs(b)
+    if a == 0:
+        return b
+    if b == 0:
+        return a
+    g = 1
+    while a % 2 == 0 and b % 2 == 0:
+        a //= 2
+        b //= 2
+        g *= 2
+    while a != 0:
+        while a % 2 == 0:
+            a //= 2
+        while b % 2 == 0:
+            b //= 2
+        if a >= b:
+            a = (a - b) // 2
+        else:
+            a, b = (b - a) // 2, a
+    return g * b
+
+
+def _brent_rho(n: int) -> int:
+    if n % 2 == 0:
+        return 2
+    if n % 3 == 0:
+        return 3
+
+    while True:
+        y = random.randrange(1, n)
+        c = random.randrange(1, n)
+        m = 128  # Gom 128 bước mới tính GCD 1 lần
+        g, r, q = 1, 1, 1
+
+        while g == 1:
+            x = y
+            for _ in range(r):
+                y = (y * y + c) % n
+
+            k = 0
+            while k < r and g == 1:
+                ys = y
+                for _ in range(min(m, r - k)):
+                    y = (y * y + c) % n
+                    q = (q * abs(x - y)) % n
+                g = _gcd_binary(q, n)
+                k += m
+            r *= 2
+
+        if g == n:
+            while True:
+                ys = (ys * ys + c) % n
+                g = _gcd_binary(abs(x - ys), n)
+                if g > 1:
+                    break
+
+        if g != n:
+            return g
+
+
+def factorint(n: int, trial_limit: int = 100_000) -> dict[int, int]:
+    """
+    Phân tích thừa số nguyên tố của n:
+    Trial Division (Wheel 2,3,5) -> Miller-Rabin -> Brent Pollard's Rho.
+    """
+    if n < 1:
+        raise ValueError("factorint() requires a positive integer")
+    if n == 1:
+        return {}
+
+    factors: dict[int, int] = {}
+
+    for p in (2, 3, 5):
+        while n % p == 0:
+            factors[p] = factors.get(p, 0) + 1
+            n //= p
+
+    wheel = (4, 2, 4, 2, 4, 6, 2, 6)
+    d = 7
+    idx = 0
+    limit = min(trial_limit, isqrt(n))
+    while d <= limit:
+        if n % d == 0:
+            cnt = 0
+            while n % d == 0:
+                cnt += 1
+                n //= d
+            factors[d] = factors.get(d, 0) + cnt
+            limit = min(trial_limit, isqrt(n))
+        d += wheel[idx]
+        idx = (idx + 1) & 7
+
+    if n == 1:
+        return factors
+
+    stack = [n]
+    while stack:
+        curr = stack.pop()
+        if curr == 1:
+            continue
+        if is_prime(curr):
+            factors[curr] = factors.get(curr, 0) + 1
+        else:
+            divisor = _brent_rho(curr)
+            stack.append(divisor)
+            stack.append(curr // divisor)
+
+    return dict(sorted(factors.items()))
+
+
+# Alias tương thích với các module khác (pohlig_hellman, gen_smooth_curves...)
+factorize = factorint
+
+
+def CRT(remainder: list[int], moduli: list[int]) -> int:
+    """Giải hệ đồng dư tuyến tính bằng Định lý Thặng dư Trung Hoa (CRT)."""
+    if len(remainder) != len(moduli):
+        raise ValueError("Both lists must be the same size")
+    if not moduli:
+        raise ValueError("Input lists cannot be empty")
+    big_moduli = 1
+    for m in moduli:
+        big_moduli *= m
+    total = 0
+    for r, m in zip(remainder, moduli):
+        ni = big_moduli // m
+        mi = pow(ni, -1, m)
+        total += ni * mi * r
+    return total % big_moduli
+
+
+# ======= ELLIPTIC CURVE & POINT CLASSES ============
 
 class ECC:
     def __init__(self, a: int, b: int, p: int):
@@ -37,6 +244,18 @@ class ECC:
     def uses_openssl(self) -> bool:
         return self._openssl_curve is not None
 
+    def discriminant(self) -> int:
+        return (4 * pow(self.a, 3, self.p) + 27 * self.b * self.b) % self.p
+
+    def is_nonsingular(self) -> bool:
+        return self.discriminant() != 0
+
+    def rhs(self, x: int) -> int:
+        return (x * x * x + self.a * x + self.b) % self.p
+
+    def is_on_curve(self, x: int, y: int) -> bool:
+        return (y * y - self.rhs(x)) % self.p == 0
+
     def get_standard_generator(self) -> tuple[int, int] | None:
         """Lấy tọa độ điểm sinh G chuẩn từ OpenSSL (có cache)."""
         if not self.uses_openssl:
@@ -46,8 +265,28 @@ class ECC:
             self._cached_g = (g_nums.x, g_nums.y)
         return self._cached_g
 
-    def is_on_curve(self, x: int, y: int) -> bool:
-        return (y * y - (x * x * x + self.a * x + self.b)) % self.p == 0
+    def random_point(self, rng: random.Random | None = None) -> "Point":
+        """Chọn một điểm affine ngẫu nhiên trên đường cong."""
+        rng = rng or random
+        while True:
+            x = rng.randrange(self.p)
+            y = sqrt_mod(self.rhs(x), self.p)
+            if y is not None:
+                y_val = y if rng.getrandbits(1) else (-y) % self.p
+                return Point(self, x, y_val)
+
+    def find_generator(self, min_order_ratio: float = 0.25) -> "Point":
+        """Tìm điểm sinh G có bậc đủ lớn trên đường cong (dùng Tonelli-Shanks)."""
+        if self.uses_openssl:
+            gx, gy = self.get_standard_generator()
+            return Point(self, gx, gy)
+        for x in range(1, min(self.p, 2000)):
+            y = sqrt_mod(self.rhs(x), self.p)
+            if y is not None:
+                pt = Point(self, x, y)
+                if FindOrder(pt) > max(10, int(self.p * min_order_ratio)):
+                    return pt
+        raise RuntimeError(f"Cannot find generator mod {self.p}")
 
     def __eq__(self, other):
         if not isinstance(other, ECC):
@@ -59,7 +298,7 @@ class ECC:
 
 
 class Point:
-    def __init__(self, curve: ECC, x: int = None, y: int = None, is_infinity: bool = False):
+    def __init__(self, curve: ECC, x: int | None = None, y: int | None = None, is_infinity: bool = False):
         self.curve = curve
         self.x = x
         self.y = y
@@ -67,6 +306,9 @@ class Point:
 
     def __str__(self):
         return "Point(Infinity)" if self.is_infinity else f"Point({self.x}, {self.y})"
+
+    def __repr__(self):
+        return self.__str__()
 
     def __neg__(self):
         if self.is_infinity:
@@ -76,8 +318,8 @@ class Point:
     def __eq__(self, other):
         if not isinstance(other, Point) or self.curve != other.curve:
             return False
-        if self.is_infinity and other.is_infinity:
-            return True
+        if self.is_infinity or other.is_infinity:
+            return self.is_infinity and other.is_infinity
         return self.x == other.x and self.y == other.y
 
     def __hash__(self):
@@ -96,6 +338,8 @@ class Point:
         if self.x == other.x and (self.y + other.y) % p == 0:
             return Point(self.curve, is_infinity=True)
         if self == other:
+            if self.y % p == 0:
+                return Point(self.curve, is_infinity=True)
             slope = (3 * self.x * self.x + self.curve.a) * pow(2 * self.y, -1, p) % p
         else:
             slope = (other.y - self.y) * pow(other.x - self.x, -1, p) % p
@@ -143,92 +387,17 @@ class Point:
             nums = priv.public_key().public_numbers()
             return Point(self.curve, nums.x, nums.y)
         except ValueError:
-            # Trường hợp curve đăng ký thêm mà chưa truyền order và n >= q
             return Point(self.curve, is_infinity=True)
 
 
-# ======= FUNCTIONS NumTheory & FindOrder ============
-
-def _gcd_binary(a: int, b: int) -> int:
-    a, b = abs(a), abs(b)
-    if a == 0:
-        return b
-    if b == 0:
-        return a
-    g = 1
-    while a % 2 == 0 and b % 2 == 0:
-        a //= 2
-        b //= 2
-        g *= 2
-    while a != 0:
-        while a % 2 == 0:
-            a //= 2
-        while b % 2 == 0:
-            b //= 2
-        if a >= b:
-            a = (a - b) // 2
-        else:
-            a, b = (b - a) // 2, a
-    return g * b
-
-
-def _is_prime(n: int) -> bool:
-    if n < 2:
-        return False
-    for q in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
-        if n % q == 0:
-            return n == q
-    d, s = n - 1, 0
-    while d % 2 == 0:
-        d //= 2
-        s += 1
-    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
-        x = pow(a, d, n)
-        if x == 1 or x == n - 1:
-            continue
-        for _ in range(s - 1):
-            x = x * x % n
-            if x == n - 1:
-                break
-        else:
-            return False
-    return True
-
-
-def _pollard_rho(n: int) -> int:
-    if n % 2 == 0:
-        return 2
-    while True:
-        c = random.randrange(1, n)
-        x = random.randrange(2, n)
-        y, d = x, 1
-        while d == 1:
-            x = (x * x + c) % n
-            y = (y * y + c) % n
-            y = (y * y + c) % n
-            d = _gcd_binary(abs(x - y), n)
-        if d != n:
-            return d
-
-
-def _factor(n: int) -> dict[int, int]:
-    if n == 1:
-        return {}
-    if _is_prime(n):
-        return {n: 1}
-    d = _pollard_rho(n)
-    factors = _factor(d)
-    for q, e in _factor(n // d).items():
-        factors[q] = factors.get(q, 0) + e
-    return factors
-
+# ======= ORDER COMPUTATION ============
 
 def _order_multiple(P: Point) -> int:
     """Tìm một bội số dương của ord(P) trong khoảng Hasse bằng BSGS."""
     p = P.curve.p
     m = isqrt(2 * isqrt(p) + 2) + 1
     table = {}
-    R = 0 * P
+    R = Point(P.curve, is_infinity=True)
     for j in range(m):
         table.setdefault(R, j)
         R = R + P
@@ -245,127 +414,25 @@ def _order_multiple(P: Point) -> int:
         plus = plus + step
     raise RuntimeError("BSGS failed to find a multiple of the point order")
 
-def CRT(remainder: list, moduli: list)-> int:
-    if (len(remainder) != len(moduli)): 
-        raise ValueError("Both list must be the same size")
-    if not moduli:
-        raise ValueError("Input lists cannot be empty")
-    list_i = []
-    BigModuli = 1
-    for i in moduli:
-        BigModuli *= i
-    for i in range(len(moduli)):
-        Ni = BigModuli//moduli[i]
-        Mi = pow(Ni, -1, moduli[i])
-        xi = Ni*Mi*remainder[i]
-        list_i.append(xi)
-    return sum(list_i) % BigModuli
-    
 
-def FindOrder(P: Point) -> int:
-    """Tìm bậc chính xác của điểm P (dùng bậc nhóm q nếu là curve chuẩn, ngược lại dùng BSGS)."""
+def FindOrder(P: Point, group_order_hint: int | None = None) -> int:
+    """
+    Tìm bậc chính xác của điểm P:
+    - Nếu truyền group_order_hint (ví dụ #E đã biết), bỏ qua BSGS và chia dần trực tiếp.
+    - Nếu là đường cong chuẩn NIST/SECG, lấy sẵn bậc nhóm q.
+    - Ngược lại dùng BSGS trên khoảng Hasse.
+    """
     if P.is_infinity:
         return 1
 
-    # Nhánh 1: Đường cong chuẩn đã biết sẵn bậc nhóm q (NIST/SECG)
-    if getattr(P.curve, "_group_order", None) is not None:
+    if group_order_hint is not None:
+        n = group_order_hint
+    elif getattr(P.curve, "_group_order", None) is not None:
         n = P.curve._group_order
-    # Nhánh 2: Đường cong tùy chỉnh nhỏ -> dùng BSGS
     else:
         n = _order_multiple(P)
 
-    for q in _factor(n):
+    for q in factorint(n):
         while n % q == 0 and ((n // q) * P).is_infinity:
             n //= q
     return n
-
-def _brent_rho(n: int) -> int:
-    if n % 2 == 0:
-        return 2
-    if n % 3 == 0:
-        return 3
-
-    while True:
-        y = random.randrange(1, n)
-        c = random.randrange(1, n)
-        m = 128  # Gom 128 bước mới tính GCD 1 lần
-        g, r, q = 1, 1, 1
-
-        while g == 1:
-            x = y
-            for _ in range(r):
-                y = (y * y + c) % n
-
-            k = 0
-            while k < r and g == 1:
-                ys = y
-                for _ in range(min(m, r - k)):
-                    y = (y * y + c) % n
-                    q = (q * abs(x - y)) % n
-                g = _gcd_binary(q, n)
-                k += m
-            r *= 2
-
-        if g == n:
-            # Lùi lại từng bước nếu batch bị gộp quá lố
-            while True:
-                ys = (ys * ys + c) % n
-                g = _gcd_binary(abs(x - ys), n)
-                if g > 1:
-                    break
-
-        if g != n:
-            return g
-
-
-def factorint(n: int, trial_limit: int = 100_000) -> dict[int, int]:
-    """
-    Trial Division (Wheel 2,3,5) -> Miller-Rabin -> Brent Pollard's Rho.
-    """
-    if n < 1:
-        raise ValueError("factorint() requires a positive integer")
-    if n == 1:
-        return {}
-
-    factors: dict[int, int] = {}
-
-    # 1. Tầng 1: Quét nhanh các thừa số nhỏ (2, 3, 5 và wheel mod 30)
-    for p in (2, 3, 5):
-        while n % p == 0:
-            factors[p] = factors.get(p, 0) + 1
-            n //= p
-
-    # Bước nhảy wheel mod 30 bỏ qua các bội của 2, 3, 5 (tiết kiệm 73% phép chia)
-    wheel = (4, 2, 4, 2, 4, 6, 2, 6)
-    d = 7
-    idx = 0
-    limit = min(trial_limit, isqrt(n))
-    while d <= limit:
-        if n % d == 0:
-            cnt = 0
-            while n % d == 0:
-                cnt += 1
-                n //= d
-            factors[d] = factors.get(d, 0) + cnt
-            limit = min(trial_limit, isqrt(n))
-        d += wheel[idx]
-        idx = (idx + 1) & 7
-
-    if n == 1:
-        return factors
-
-    # 2. Tầng 2 & 3: Đệ quy tách phần còn lại bằng Miller-Rabin + Brent Rho
-    stack = [n]
-    while stack:
-        curr = stack.pop()
-        if curr == 1:
-            continue
-        if _is_prime(curr):
-            factors[curr] = factors.get(curr, 0) + 1
-        else:
-            divisor = _brent_rho(curr)
-            stack.append(divisor)
-            stack.append(curr // divisor)
-
-    # Sắp xếp dict theo khóa nguyên tố tăng dần (rất hữu ích khi debug Pohlig-Hellman)
-    return dict(sorted(factors.items()))
