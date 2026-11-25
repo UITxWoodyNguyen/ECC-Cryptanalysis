@@ -3,30 +3,8 @@ curves/toy_curve_gen.py -- Module sinh đường cong Elliptic "toy" trên F_p
 =========================================================================
 Topic 14: ECC Cryptanalysis -- Track A (generic ECDLP search).
 
-Sinh các đường cong Weierstrass ngắn  E: y^2 = x^3 + a*x + b  (mod p)
-với p nguyên tố cỡ 16..48 bit, đếm số điểm #E(F_p), phân tích thừa số,
-chọn điểm cơ sở G và xuất bản ghi đúng chuẩn D1 (data/schema_definition.json).
-
-Các chế độ sinh (--modes / tham số `mode`):
-  prime     h = 1, n = #E nguyên tố          -> category "safe_prime_order"
-  cofactor  #E = h*n, n nguyên tố, 2<=h<=H   -> category "cofactor_gt1"
-  smooth    #E có mọi ước nguyên tố <= B     -> category "smooth_order"
-            (dùng cho Pohlig-Hellman; gen_smooth_curves.py có thể tái dùng)
-
-Đếm điểm: p < 2^16 dùng đếm trực tiếp; còn lại dùng BSGS trên khoảng Hasse
-(kiểu Mestre), độ phức tạp ~ O(p^(1/4)) -- đủ nhanh tới p ~ 48 bit trong Python.
-
-Hạn chế (cố ý, vì đây là toy): Miller-Rabin tất định chỉ đúng tới ~3.3e24;
-không dùng cho tham số mật mã thật.
-
-Cách dùng:
-  python curves/toy_curve_gen.py --selftest
-  python curves/toy_curve_gen.py --min-bits 16 --max-bits 40 --step 4 \
-         --per-bit 2 --modes prime cofactor --seed 14 --out data/D1_curves.csv
-  # dùng như thư viện:
-  from curves.toy_curve_gen import generate_curve, Curve
-  row = generate_curve(24, mode="prime", seed=1)
-  E = Curve.from_row(row); G = Curve.base_point_from_row(row)
+Tái sử dụng trực tiếp nền tảng toán học & phép toán nhóm từ `curves/ecc.py`
+(ECC, Point, FindOrder, is_prime, random_prime, sqrt_mod, factorint).
 """
 from __future__ import annotations
 
@@ -37,13 +15,25 @@ import random
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import gcd, isqrt
+from math import isqrt, prod
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-Point = Optional[Tuple[int, int]]  # None = điểm vô cực O
+# Tự động thêm thư mục gốc dự án vào sys.path để chạy được từ mọi vị trí
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from curves.ecc import (
+    ECC,
+    Point,
+    FindOrder,
+    is_prime,
+    random_prime,
+    sqrt_mod,
+    factorint as factorize,
+)
 
 GENERATION_METHOD = "toy_curve_gen.v1"
 NAIVE_COUNT_LIMIT = 1 << 16  # p nhỏ hơn ngưỡng này -> đếm điểm trực tiếp
@@ -63,229 +53,47 @@ _INT_COLUMNS = {"n_bits", "seed"}
 
 
 # ---------------------------------------------------------------------------
-# 1. Số học cơ bản: nguyên tố, phân tích thừa số, căn bậc hai modulo p
+# 1. Helper chuyển đổi bản ghi D1 <-> (ECC, Point) từ curves/ecc.py
 # ---------------------------------------------------------------------------
-_MR_BASES = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)
+def curve_from_row(row: dict) -> ECC:
+    return ECC(int(row["a"]), int(row["b"]), int(row["p"]))
 
 
-def is_prime(n: int) -> bool:
-    """Miller-Rabin tất định (đúng cho n < 3.3e24)."""
-    if n < 2:
-        return False
-    for q in _MR_BASES:
-        if n % q == 0:
-            return n == q
-    d, s = n - 1, 0
-    while d % 2 == 0:
-        d //= 2
-        s += 1
-    for a in _MR_BASES:
-        x = pow(a, d, n)
-        if x in (1, n - 1):
-            continue
-        for _ in range(s - 1):
-            x = x * x % n
-            if x == n - 1:
-                break
-        else:
-            return False
-    return True
-
-
-def random_prime(rng: random.Random, bits: int) -> int:
-    """Số nguyên tố ngẫu nhiên có đúng `bits` bit."""
-    if bits < 8:
-        raise ValueError("bits phải >= 8 cho toy curve")
-    while True:
-        cand = rng.getrandbits(bits) | (1 << (bits - 1)) | 1
-        if is_prime(cand):
-            return cand
-
-
-def _pollard_rho(n: int) -> int:
-    """Trả về một ước nguyên thực sự của hợp số lẻ n (Floyd)."""
-    rng = random.Random(n)  # tất định theo n
-    while True:
-        c = rng.randrange(1, n)
-        x = y = rng.randrange(0, n)
-        d = 1
-        while d == 1:
-            x = (x * x + c) % n
-            y = (y * y + c) % n
-            y = (y * y + c) % n
-            d = gcd(abs(x - y), n)
-        if d != n:
-            return d
-
-
-def factorize(n: int) -> Dict[int, int]:
-    """Phân tích n thành {nguyên tố: số mũ}. Chia thử rồi Pollard rho."""
-    if n < 1:
-        raise ValueError("n phải >= 1")
-    out: Dict[int, int] = {}
-    d = 2
-    while d < 5000 and d * d <= n:
-        while n % d == 0:
-            out[d] = out.get(d, 0) + 1
-            n //= d
-        d += 1 if d == 2 else 2
-
-    def rec(m: int) -> None:
-        if m == 1:
-            return
-        if is_prime(m):
-            out[m] = out.get(m, 0) + 1
-            return
-        f = _pollard_rho(m)
-        rec(f)
-        rec(m // f)
-
-    rec(n)
-    return dict(sorted(out.items()))
-
-
-def sqrt_mod(n: int, p: int) -> Optional[int]:
-    """Căn bậc hai của n modulo p nguyên tố lẻ (Tonelli-Shanks); None nếu không có."""
-    n %= p
-    if n == 0:
-        return 0
-    if pow(n, (p - 1) // 2, p) != 1:
-        return None
-    if p % 4 == 3:
-        return pow(n, (p + 1) // 4, p)
-    q, s = p - 1, 0
-    while q % 2 == 0:
-        q //= 2
-        s += 1
-    z = 2
-    while pow(z, (p - 1) // 2, p) != p - 1:
-        z += 1
-    m, c, t, r = s, pow(z, q, p), pow(n, q, p), pow(n, (q + 1) // 2, p)
-    while t != 1:
-        i, t2 = 0, t
-        while t2 != 1:
-            t2 = t2 * t2 % p
-            i += 1
-        b = pow(c, 1 << (m - i - 1), p)
-        m, c = i, b * b % p
-        t, r = t * c % p, r * b % p
-    return r
+def base_point_from_row(row: dict, curve: Optional[ECC] = None) -> Point:
+    E = curve or curve_from_row(row)
+    return Point(E, int(row["base_point_x"]), int(row["base_point_y"]))
 
 
 # ---------------------------------------------------------------------------
-# 2. Đường cong và phép toán nhóm (toạ độ affine)
+# 2. Đếm số điểm #E(F_p) sử dụng trực tiếp ECC & Point
 # ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class Curve:
-    """E: y^2 = x^3 + a*x + b trên F_p (p nguyên tố > 3)."""
-    p: int
-    a: int
-    b: int
-
-    def discriminant(self) -> int:
-        return (4 * pow(self.a, 3, self.p) + 27 * self.b * self.b) % self.p
-
-    def is_nonsingular(self) -> bool:
-        return self.discriminant() != 0
-
-    def rhs(self, x: int) -> int:
-        return (x * x * x + self.a * x + self.b) % self.p
-
-    def contains(self, P: Point) -> bool:
-        if P is None:
-            return True
-        x, y = P
-        return 0 <= x < self.p and 0 <= y < self.p and (y * y - self.rhs(x)) % self.p == 0
-
-    def neg(self, P: Point) -> Point:
-        return None if P is None else (P[0], (-P[1]) % self.p)
-
-    def add(self, P: Point, Q: Point) -> Point:
-        if P is None:
-            return Q
-        if Q is None:
-            return P
-        p = self.p
-        x1, y1 = P
-        x2, y2 = Q
-        if x1 == x2:
-            if (y1 + y2) % p == 0:
-                return None
-            lam = (3 * x1 * x1 + self.a) * pow(2 * y1, -1, p) % p
-        else:
-            lam = (y2 - y1) * pow(x2 - x1, -1, p) % p
-        x3 = (lam * lam - x1 - x2) % p
-        return (x3, (lam * (x1 - x3) - y1) % p)
-
-    def mul(self, k: int, P: Point) -> Point:
-        """Nhân vô hướng k*P bằng double-and-add."""
-        if k < 0:
-            return self.mul(-k, self.neg(P))
-        R: Point = None
-        while k:
-            if k & 1:
-                R = self.add(R, P)
-            P = self.add(P, P)
-            k >>= 1
-        return R
-
-    def random_point(self, rng: random.Random) -> Tuple[int, int]:
-        """Điểm affine ngẫu nhiên (không phải O)."""
-        while True:
-            x = rng.randrange(self.p)
-            y = sqrt_mod(self.rhs(x), self.p)
-            if y is not None:
-                return (x, y if rng.getrandbits(1) else (-y) % self.p)
-
-    def point_order(self, P: Point, group_order: int,
-                    factors: Dict[int, int]) -> int:
-        """Bậc của P, biết bội group_order của nó và phân tích thừa số của bội đó."""
-        order = group_order
-        for q in factors:
-            while order % q == 0 and self.mul(order // q, P) is None:
-                order //= q
-        return order
-
-    # -- (de)serialize với bản ghi D1 -------------------------------------
-    @staticmethod
-    def from_row(row: dict) -> "Curve":
-        return Curve(int(row["p"]), int(row["a"]), int(row["b"]))
-
-    @staticmethod
-    def base_point_from_row(row: dict) -> Tuple[int, int]:
-        return (int(row["base_point_x"]), int(row["base_point_y"]))
-
-
-# ---------------------------------------------------------------------------
-# 3. Đếm số điểm #E(F_p)
-# ---------------------------------------------------------------------------
-def count_points_naive(E: Curve) -> int:
+def count_points_naive(E: ECC) -> int:
     """Đếm trực tiếp O(p) -- chỉ dùng cho p nhỏ / kiểm chứng."""
     sq = Counter(y * y % E.p for y in range(E.p))
     return 1 + sum(sq.get(E.rhs(x), 0) for x in range(E.p))
 
 
-def _hasse_candidates(E: Curve, P: Tuple[int, int], lo: int, hi: int) -> List[int]:
+def _hasse_candidates(E: ECC, P: Point, lo: int, hi: int) -> List[int]:
     """Mọi N trong [lo, hi] thoả N*P = O (baby-step giant-step)."""
     m = isqrt(hi - lo + 1) + 1
     baby: Dict[Point, List[int]] = {}
-    R: Point = None
+    R = Point(E, is_infinity=True)
     for j in range(m):
         baby.setdefault(R, []).append(j)  # R = j*P
-        R = E.add(R, P)
-    giant_step = E.neg(R)                  # -m*P
-    T = E.neg(E.mul(lo, P))                # -lo*P
+        R = R + P
+    giant_step = -R                        # -m*P
+    T = -(lo * P)                          # -lo*P
     found: List[int] = []
     for i in range(m):
         for j in baby.get(T, ()):
             N = lo + i * m + j
             if N <= hi:
                 found.append(N)
-        T = E.add(T, giant_step)
+        T = T + giant_step
     return found
 
 
-def count_points_bsgs(E: Curve, rng: Optional[random.Random] = None,
+def count_points_bsgs(E: ECC, rng: Optional[random.Random] = None,
                       max_points: int = 40) -> int:
     """Đếm #E bằng BSGS trên khoảng Hasse [p+1-2sqrt(p), p+1+2sqrt(p)]."""
     rng = rng or random.Random(E.p)
@@ -300,7 +108,7 @@ def count_points_bsgs(E: Curve, rng: Optional[random.Random] = None,
                 continue
             cands = c
         else:
-            cands = [N for N in cands if E.mul(N, P) is None]
+            cands = [N for N in cands if (N * P).is_infinity]
         if len(cands) == 1:
             return cands[0]
         if not cands:
@@ -308,12 +116,12 @@ def count_points_bsgs(E: Curve, rng: Optional[random.Random] = None,
     raise RuntimeError("count_points_bsgs: không xác định được duy nhất #E")
 
 
-def count_points(E: Curve, rng: Optional[random.Random] = None) -> int:
+def count_points(E: ECC, rng: Optional[random.Random] = None) -> int:
     return count_points_naive(E) if E.p < NAIVE_COUNT_LIMIT else count_points_bsgs(E, rng)
 
 
 # ---------------------------------------------------------------------------
-# 4. Phân loại và dựng bản ghi D1
+# 3. Phân loại và dựng bản ghi D1
 # ---------------------------------------------------------------------------
 def _fact_list(f: Dict[int, int]) -> List[dict]:
     return [{"prime": str(q), "exponent": e} for q, e in f.items()]
@@ -352,7 +160,7 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def make_row(E: Curve, G: Tuple[int, int], N: int, fN: Dict[int, int],
+def make_row(E: ECC, G: Point, N: int, fN: Dict[int, int],
              n: int, fn: Dict[int, int], seed: int, curve_id: str,
              smooth_bound: Optional[int] = None, notes: Optional[str] = None,
              commit: Optional[str] = None) -> dict:
@@ -363,7 +171,7 @@ def make_row(E: Curve, G: Tuple[int, int], N: int, fN: Dict[int, int],
         "p": str(E.p), "a": str(E.a), "b": str(E.b),
         "discriminant": str(disc), "discriminant_ok": disc != 0,
         "E_count": str(N), "E_count_factorization": _fact_list(fN),
-        "base_point_x": str(G[0]), "base_point_y": str(G[1]),
+        "base_point_x": str(G.x), "base_point_y": str(G.y),
         "subgroup_n": str(n), "n_bits": n.bit_length(),
         "n_factorization": _fact_list(fn),
         "cofactor_h": str(h), "largest_prime_factor_n": str(max(fn)),
@@ -377,7 +185,7 @@ def make_row(E: Curve, G: Tuple[int, int], N: int, fN: Dict[int, int],
 
 
 # ---------------------------------------------------------------------------
-# 5. Bộ sinh đường cong
+# 4. Bộ sinh đường cong
 # ---------------------------------------------------------------------------
 MODES = ("prime", "cofactor", "smooth")
 
@@ -389,12 +197,6 @@ def generate_curve(n_bits: int, mode: str = "prime", seed: int = 0,
     """
     Sinh một đường cong và trả về bản ghi D1 (dict).
     Tất định: cùng (n_bits, mode, seed, ...) -> cùng đường cong.
-
-    n_bits        : số bit mong muốn của n = ord(G).
-    mode          : "prime" | "cofactor" | "smooth".
-    max_cofactor  : cận trên của h trong mode "cofactor".
-    smooth_bound  : cận B-smooth cho mode "smooth" (mặc định 2^(n_bits//3)).
-    allow_special : cho phép đường cong anomalous / supersingular (mặc định loại).
     """
     if mode not in MODES:
         raise ValueError(f"mode phải thuộc {MODES}")
@@ -411,7 +213,7 @@ def generate_curve(n_bits: int, mode: str = "prime", seed: int = 0,
         else:
             p_bits = n_bits
         p = random_prime(rng, p_bits)
-        E = Curve(p, rng.randrange(p), rng.randrange(p))
+        E = ECC(rng.randrange(p), rng.randrange(p), p)
         if not E.is_nonsingular():
             continue
         try:
@@ -435,16 +237,16 @@ def generate_curve(n_bits: int, mode: str = "prime", seed: int = 0,
                 continue
             n, fn = qmax, {qmax: 1}
             P = E.random_point(rng)
-            G = E.mul(h, P)
-            if G is None:
+            G = h * P
+            if G.is_infinity:
                 continue
         else:  # smooth
             if qmax > smooth_bound or N.bit_length() < n_bits:
                 continue
             best, best_n = None, 0
-            for _t in range(20):  # chọn điểm có bậc lớn nhất trong vài mẫu
+            for _t in range(20):
                 P = E.random_point(rng)
-                o = E.point_order(P, N, fN)
+                o = FindOrder(P, group_order_hint=N)
                 if o > best_n:
                     best, best_n = P, o
             n = best_n
@@ -458,35 +260,34 @@ def generate_curve(n_bits: int, mode: str = "prime", seed: int = 0,
 
 
 # ---------------------------------------------------------------------------
-# 6. Kiểm chứng toán học một bản ghi D1
+# 5. Kiểm chứng toán học một bản ghi D1
 # ---------------------------------------------------------------------------
 def verify_row(row: dict, recount: bool = True) -> List[str]:
-    """Trả về danh sách lỗi (rỗng = hợp lệ). Hoạt động với row dict hoặc dòng CSV đã parse."""
+    """Trả về danh sách lỗi (rỗng = hợp lệ)."""
     row = parse_csv_row(row) if isinstance(row.get("discriminant_ok"), str) else row
     errs: List[str] = []
-    p, a, b = int(row["p"]), int(row["a"]), int(row["b"])
-    E = Curve(p, a, b)
+    E = curve_from_row(row)
+    p = E.p
     N, n, h = int(row["E_count"]), int(row["subgroup_n"]), int(row["cofactor_h"])
-    G = Curve.base_point_from_row(row)
+    G = base_point_from_row(row, E)
     if not is_prime(p) or p <= 3:
         errs.append("p không phải số nguyên tố > 3")
     if not E.is_nonsingular() or str(E.discriminant()) != str(row["discriminant"]):
         errs.append("discriminant sai hoặc curve suy biến")
-    if not E.contains(G):
+    if G.is_infinity or not (0 <= G.x < p and 0 <= G.y < p and E.is_on_curve(G.x, G.y)):
         errs.append("G không nằm trên curve")
-    if E.mul(n, G) is not None:
+    if not (n * G).is_infinity:
         errs.append("n*G != O")
     fn = {int(f["prime"]): f["exponent"] for f in row["n_factorization"]}
     fN = {int(f["prime"]): f["exponent"] for f in row["E_count_factorization"]}
     for q in fn:
         if not is_prime(q):
             errs.append(f"thừa số {q} của n không nguyên tố")
-        elif E.mul(n // q, G) is None:
+        elif ((n // q) * G).is_infinity:
             errs.append(f"bậc của G nhỏ hơn n (chia hết cho {q} lần nữa)")
-    prod = lambda f: __import__("math").prod(q ** e for q, e in f.items())
-    if prod(fn) != n:
+    if prod(q ** e for q, e in fn.items()) != n:
         errs.append("n_factorization không nhân lại ra n")
-    if prod(fN) != N:
+    if prod(q ** e for q, e in fN.items()) != N:
         errs.append("E_count_factorization không nhân lại ra #E")
     if n * h != N:
         errs.append("n * h != #E")
@@ -504,7 +305,7 @@ def verify_row(row: dict, recount: bool = True) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# 7. Đọc / ghi CSV theo chuẩn D1
+# 6. Đọc / ghi CSV theo chuẩn D1
 # ---------------------------------------------------------------------------
 def _to_cell(col: str, v):
     if v is None:
@@ -517,7 +318,6 @@ def _to_cell(col: str, v):
 
 
 def parse_csv_row(raw: dict) -> dict:
-    """Dòng csv.DictReader -> dict đúng kiểu như make_row."""
     row: dict = {}
     for col in D1_COLUMNS:
         v = raw.get(col, "")
@@ -550,7 +350,6 @@ def load_csv(path: str) -> List[dict]:
 
 
 def _next_index(path: str) -> int:
-    """Chỉ số curve_id kế tiếp khi --append."""
     p = Path(path)
     if not p.exists() or p.stat().st_size == 0:
         return 0
@@ -559,7 +358,7 @@ def _next_index(path: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 8. Selftest và CLI
+# 7. Selftest và CLI
 # ---------------------------------------------------------------------------
 def selftest() -> bool:
     ok = True
@@ -568,7 +367,7 @@ def selftest() -> bool:
     for bits in (14, 17, 20):
         for _ in range(3):
             p = random_prime(rng, bits)
-            E = Curve(p, rng.randrange(p), rng.randrange(p))
+            E = ECC(rng.randrange(p), rng.randrange(p), p)
             if not E.is_nonsingular():
                 continue
             n1, n2 = count_points_naive(E), count_points_bsgs(E, rng)
@@ -578,7 +377,7 @@ def selftest() -> bool:
     print("[2] Phân tích thừa số")
     for v in (2**31 - 1, 600851475143, 999999000001 * 3):
         f = factorize(v)
-        good = __import__("math").prod(q ** e for q, e in f.items()) == v
+        good = prod(q ** e for q, e in f.items()) == v
         ok &= good
         print(f"    {v} = {f} {'OK' if good else 'FAIL'}")
     print("[3] Sinh + kiểm chứng curve từng mode")
