@@ -215,6 +215,8 @@ Z_3 &= H\,Z_1Z_2
 >**Xử lý trường hợp đặc biệt:**
 >- $H = 0$ và $R = 0 \implies$ hai điểm trùng nhau $\implies$ dùng công thức nhân đôi.
 >- $H = 0$ và $R \neq 0 \implies P_2 = -P_1 \implies$ kết quả là $O$.
+>
+>**Triển khai trong mã nguồn (`curves/ecc.py::JacobianPoint`):** Cấu trúc lớp `JacobianPoint` hiện thực hóa đầy đủ các công thức trên, hỗ trợ `from_affine()`, `to_affine()`, nhân đôi `double()`, cộng điểm `__add__()`, và nhân vô hướng `__mul__()`. Lớp này giúp loại bỏ hoàn toàn các phép nghịch đảo modulo trung gian (vốn tốn kém bậc nhất trong số học $\mathbb{F}_p$), chỉ cần đúng một phép nghịch đảo khi chuyển đổi kết quả cuối về Affine. Điểm `Point` có thể chuyển nhanh sang Jacobian qua `point.to_jacobian()`.
 
 ---
 
@@ -259,6 +261,17 @@ Trong đó $t$ là **vết Frobenius** (trace of Frobenius).
 $$\#E(\mathbb{F}_p)=1+p+\sum_{x\in\mathbb{F}_p}\left(\frac{x^3+ax+b}{p}\right).$$
 
 Ở đây số $1$ là điểm vô cực; ký hiệu Legendre nhận giá trị $0$ khi $z=0$, $1$ khi $z$ là thặng dư bậc hai khác $0$, và $-1$ khi $z$ là bất thặng dư.
+
+- **Sinh điểm và căn bậc hai modulo (Thuật toán Tonelli-Shanks):**
+  Để sinh điểm trên đường cong hoặc tìm tọa độ $y$ tương ứng với $x$, cần giải phương trình thặng dư bậc hai $y^2 \equiv z \pmod p$ (với $z = x^3 + ax + b \pmod p$). Trong `curves/ecc.py::sqrt_mod`:
+  - Nếu $p \equiv 3 \pmod 4$: tính nhanh bằng tiêu chuẩn Euler $y \equiv z^{(p+1)/4} \pmod p$.
+  - Nếu $p \equiv 1 \pmod 4$: triển khai thuật toán Tonelli-Shanks đầy đủ, phân rã $p - 1 = q \cdot 2^s$, tìm bất thặng dư bậc hai $z_0$ và khử dần các lũy thừa của 2 để tìm nghiệm chính xác.
+
+- **Xác định bậc điểm bằng BSGS trên khoảng Hasse (`curves/ecc.py::FindOrder`):**
+  Khi chưa biết trước $\#E(\mathbb{F}_p)$, để tìm bậc $\operatorname{ord}(P)$ của một điểm $P$:
+  1. *Tìm bội số:* Áp dụng Baby-Step Giant-Step trên khoảng Hasse $[p+1-2\sqrt{p}, p+1+2\sqrt{p}]$ với kích thước bước $m = \lceil\sqrt{2\sqrt{p}+2}\rceil + 1$ để tìm một số nguyên dương $M$ sao cho $[M]P = O$ (`_order_multiple`).
+  2. *Thu gọn về bậc nguyên tố:* Phân tích $M = \prod q_i^{e_i}$ (bằng `factorint`). Với mỗi ước nguyên tố $q_i$, lặp kiểm tra: nếu $[M/q_i]P = O$ thì gán $M \leftarrow M/q_i$. Kết quả cuối cùng là bậc tối tiểu chính xác của $P$.
+  3. *Tối ưu:* Nếu là đường cong chuẩn NIST/SECG hoặc biết trước gợi ý $\#E$, hàm tận dụng ngay bậc nhóm sẵn có để bỏ qua giai đoạn BSGS.
 
 ### 2.2. Các cấu trúc nhóm cần loại trừ khi chọn đường cong
 
@@ -455,6 +468,16 @@ $$d\equiv\sum_{i=1}^{k}d_iM_i(M_i^{-1}\bmod q_i^{e_i})\pmod n.$$
 Chi phí bị chi phối bởi các ước nguyên tố lớn nhất, thường được tóm tắt theo $O(\sum_i e_i\sqrt{q_i})$ trong mô hình sử dụng thuật toán generic cho các nhóm con.
 Đặt $q_{\max}=\max_i q_i$, tham số có $q_{\max}$ nhỏ sẽ làm ECDLP yếu dù $n$ có thể lớn.
 
+- **Định lý Số dư Trung Hoa (`curves/ecc.py::CRT`):**
+  Thuật toán giải hệ phương trình đồng dư $d \equiv r_i \pmod{m_i}$ với $M = \prod m_i$, $N_i = M / m_i$, $M_i \equiv N_i^{-1} \pmod{m_i}$:
+  $$d \equiv \sum r_i N_i M_i \pmod M.$$
+
+- **Đường ống phân tích thừa số nguyên tố (`curves/ecc.py::factorint`):**
+  Để thực thi Pohlig-Hellman, bước tiên quyết là phân tích bậc nhóm $n$ thành các thừa số nguyên tố. Thư viện `ecc.py` cài đặt đường ống 3 tầng tối ưu:
+  1. *Tầng 1 (Trial Division với Wheel mod 30):* Tách các thừa số 2, 3, 5; sau đó duyệt bước nhảy wheel `(4, 2, 4, 2, 4, 6, 2, 6)` bỏ qua mọi bội số của 2, 3, 5, giảm 73% số phép chia thử so với duyệt số lẻ thông thường.
+  2. *Tầng 2 (Miller-Rabin tất định `is_prime`):* Kiểm tra tính nguyên tố với 12 cơ sở nguyên tố đầu tiên `(2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)`, đảm bảo tính tất định và chính xác tuyệt đối cho $n < 3.3 \times 10^{24}$ (~81 bit).
+  3. *Tầng 3 (Brent's Cycle-Finding Pollard's Rho `_brent_rho`):* Sử dụng hành trình đa thức $y \leftarrow (y^2 + c) \bmod n$ kết hợp thuật toán tìm chu trình của Richard Brent và kỹ thuật gom mẻ ước chung lớn nhất (Batch GCD với $m = 128$ bước), giúp tách nhanh các thừa số hợp số lớn mà trial division không xử lý kịp.
+
 **Mức an toàn generic:** nếu $n$ xấp xỉ $2^{256}$ và không có cấu trúc yếu khác, Pollard rho cần cỡ $2^{128}$ phép toán nhóm, tương ứng mục tiêu an toàn khoảng 128-bit. Máy tính lượng tử đủ quy mô với thuật toán Shor có thể giải ECDLP trong thời gian đa thức, nên ECC cổ điển không kháng được mô hình lượng tử quy mô lớn.
 
 ---
@@ -550,12 +573,13 @@ Trong hệ thống thực tế, validation đầy đủ, xử lý lỗi đồng 
 
 | Cơ sở toán học / chủ đề | Track | Tệp mã nguồn tham chiếu | Bộ dữ liệu | Metric có thể quan sát |
 |---|---|---|---|---|
-| Cấp nhóm $\#E,n,h,q_{\max}$ | Độ bền tham số | `curves/gen_smooth_curves.py` | `data/D1_curves.csv` | `largest_prime_factor`, `cofactor_h`, tỷ lệ tham số đạt tiêu chí |
-| Generic ECDLP: brute force, BSGS, Pollard rho | Track A | `curves/bsgs.py`, `curves/pollard_rho.py` | `data/D2_ecdlp_benchmarks.csv` | Số phép toán nhóm, CPU cycles, xu hướng tăng theo $n$ |
-| Pohlig–Hellman / unsafe order | Track B | `curves/pohlig_hellman.py` | `data/D2_ecdlp_benchmarks.csv` | Thời gian khôi phục theo $q_{\max}$, so sánh với BSGS trên $n$ |
+| Số học EC nền tảng (Affine & Jacobian) | Core | `curves/ecc.py::ECC`, `Point`, `JacobianPoint` | — | Số phép toán nhóm, tỉ lệ tăng tốc khi dùng Jacobian |
+| Cấp nhóm $\#E,n,h,q_{\max}$ & Tìm bậc BSGS | Độ bền tham số | `curves/toy_curve_gen.py`, `curves/ecc.py::FindOrder` | `data/D1_curves.csv`, `D1_smooth_curves.csv` | `largest_prime_factor`, `cofactor_h`, tỷ lệ tham số đạt tiêu chí |
+| Generic ECDLP: brute force, BSGS, Pollard rho | Track A | `curves/exhaustive_search.py`, `curves/bsgs.py`, `curves/pollard_rho.py` | `data/D2_ecdlp_benchmarks.csv` | Số phép toán nhóm, CPU cycles, xu hướng tăng theo $n$ |
+| Pohlig–Hellman & Phân tích thừa số (Wheel/Brent) | Track B/A.12 | `curves/pohlig_hellman.py`, `curves/ecc.py::factorint`, `CRT` | `data/D1_smooth_curves.csv`, `data/smooth_curve_analysis.csv`, `D2_ecdlp_benchmarks.csv` | Thời gian khôi phục theo $q_{\max}$, speedup so với BSGS trên $n$ |
 | Nonce reuse trong ECDSA | Track C | `signatures/nonce_reuse_attacker.py` | `data/D3_signatures.csv` | Phát hiện `repeated_r`, trạng thái khôi phục khóa trong môi trường mô phỏng |
-| Point validation / Invalid-Curve | Track D | `validation/gen_invalid_curves.py`, `validation/crt_solver.py` | `data/D4_validation.csv` | Trạng thái `on_curve`, số truy vấn oracle, tỷ lệ kiểm thử thành công/thất bại |
-| Scalar multiplication timing leakage | Track F | `scripts/measure_harness.py` | `data/D6_timing.csv` | Phân phối cycles, kiểm định Welch's t-test giữa các lớp đầu vào |
+| Point validation / Invalid-Curve / Embedding degree | Track D | `curves/ecc.py::validate_public_key`, `embedding_degree`, `validation/` | `data/D4_validation.csv` | Trạng thái `on_curve`, `subgroup_check`, số truy vấn oracle |
+| Scalar multiplication timing & Montgomery ladder | Track F / Side-channel | `curves/ecc.py::Point.montgomery_ladder`, `scripts/measure_harness.py` | `data/D6_timing.csv` | Phân phối cycles, kiểm định Welch's t-test giữa các lớp đầu vào |
 
 ---
 
