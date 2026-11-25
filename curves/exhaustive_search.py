@@ -1,44 +1,19 @@
-"""
-curves/exhaustive_search.py
-===========================
-Exhaustive Scalar Search cho ECDLP: cho G (bậc n) và Q = d*G, tìm d.
-
-Thuật toán: thử k = 1, 2, ..., n-1 với R_k = R_{k-1} + G cho đến khi R_k == Q.
-    - Thời gian: O(n) phép cộng điểm
-    - Bộ nhớ   : O(1)
-
-Số học đường cong dùng từ curves/ecc.py (ECC, Point).
-`operations` chỉ đếm phép cộng điểm trong vòng lặp chính.
-"""
-
-from curves.ecc import ECC, Point
+from curves.ecc import Point
 
 
-def exhaustive_scalar_search(curve: ECC, G: Point, Q: Point, n: int) -> dict:
-    result = {"d": None, "operations": 0, "memory_entries": None,
-              "restarts": None, "algo_params": {}}
+def exhaustive_search(P: Point, Q: Point, bounds: int) -> int:
+    """Tìm số nguyên n sao cho P = n * Q bằng vét cạn cộng dồn."""
+    if P.curve != Q.curve:
+        raise ValueError("P and Q must be on the same curve")
+    if P.is_infinity:
+        return 0
+    if Q.is_infinity:
+        raise ValueError("Generator point Q cannot be at infinity")
 
-    if Q.is_infinity:                   # Q = O  =>  d ≡ 0 (mod n)
-        result["d"] = 0
-        return result
-
-    R = G
-    ops = 0
-    for k in range(1, n):
-        if R == Q:
-            result["d"] = k
-            break
-        R = R + G
-        ops += 1
-    result["operations"] = ops
-    return result
-
-
-def Exhaustive_search(P: Point, Q: Point, Bounds: int) -> int:
-    """Wrapper tương thích API cũ: tìm n nhỏ nhất (1 <= n < Bounds) sao cho P == n*Q."""
-    n = 1
-    while n < Bounds:
-        if P == n * Q:
+    R = Q
+    for n in range(1, bounds + 1):
+        if R == P:
             return n
-        n += 1
-    return None
+        R = R + Q
+
+    raise ValueError(f"Value not found within bounds (1..{bounds}). Increase bounds.")

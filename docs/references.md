@@ -235,6 +235,9 @@ flowchart LR
 
 **Học thuật**
 
-9. Antipa, Brown, Menezes, Struik, Vanstone. *Validation of Elliptic Curve Public Keys*. PKC 2003.
-10. Brumley, Tuveri. *Remote Timing Attacks are Still Practical*. ESORICS 2011.
-11. Boneh, Venkatesan. *Hardness of Computing the Most Significant Bits of Secret Keys in Diffie-Hellman and Related Schemes*. CRYPTO 1996.
+1. **Định dạng tham chiếu:** Sử dụng định dạng số thứ tự `[n]` tương ứng với danh mục tài liệu tại Mục 6, đính kèm ngày truy cập tài liệu (*retrieval date: 2026-10-18*).
+2. **Không sao chép nguyên văn (Paraphrasing):** Không sao chép các đoạn văn dài từ tiêu chuẩn. Tất cả nội dung phải được diễn đạt lại bằng ngôn ngữ phân tích kỹ thuật của nhóm, kèm theo số điều/mục cụ thể khi trích dẫn định lý hoặc công thức.
+3. **Cấu trúc tuyên bố lỗ hổng (Vulnerability Assertion):** Mọi phát biểu về một lỗ hổng bảo mật trong báo cáo bắt buộc phải cung cấp tối thiểu 6 trường thông tin chuẩn hóa:
+   $$\text{Tuple} = \langle \text{Mã CVE}, \text{Tên gói phần mềm}, \text{Phiên bản bị lỗi}, \text{Phiên bản đã vá}, \text{Phân loại CWE}, \text{Nguồn kiểm chứng} \rangle$$
+
+   
