@@ -1,6 +1,6 @@
 # Experimental Design — Track A, C, D (Topic 14)
 
-> **Trạng thái:** DRAFT v0.3 (đã bổ sung: Secure Storage tích hợp C/D; Track A chạy Pollard's rho dài hạn §A.11; Track C dùng `k=4` làm demo mặc định §C.4; Track D sinh điểm tất định từ seed + tự xác minh bậc §D.3) · **Liên kết:** `docs/threat_model.md` (tầng L0, L3, L2) · `curves/math_notes.md` · `docs/references.md`
+> **Trạng thái:** DRAFT v0.4 (đã bổ sung: Secure Storage tích hợp C/D; Track A chạy Pollard's rho dài hạn §A.11 & Pohlig-Hellman trên curve cấp trơn §A.12; D1/D2/D3/D6 đã tạo và kiểm chứng; Track C dùng `k=4` làm demo mặc định §C.4; Track D sinh điểm tất định từ seed + tự xác minh bậc §D.3) · **Liên kết:** `docs/threat_model.md` (tầng L0, L3, L2) · `curves/math_notes.md` · `docs/references.md`
 > **Phạm vi an toàn:** toàn bộ target là code/toy curve/container do nhóm kiểm soát; khoá là **disposable lab key**; không dùng production key, không tấn công public chain.
 > Mọi thí nghiệm theo vòng: **vulnerable baseline → evidence → mitigation → identical re-test** (checklist mục 17 của đề).
 
@@ -174,7 +174,10 @@ git_commit, host_id
 | BSGS tràn RAM | Giới hạn `n_bits ≤ 40`; ghi `memory_peak` |
 
 ## A.10 Đầu ra Track A
-`data/D1.csv`, `data/D2.csv`, FA1–FA4, `results/trackA/summary.md` (bảng slope ± CI, kết luận HA1–HA4).
+- `data/D1_curves.csv` (53 toy curves an toàn/đặc biệt), `data/D1_smooth_curves.csv` (9 curves cấp trơn cho Pohlig-Hellman), `data/D1_roundtrip_test.csv` (3 curves kiểm tra roundtrip).
+- `data/D2_ecdlp_benchmarks.csv` (53 trials thực nghiệm cho Exhaustive, BSGS, Pollard Rho, Pohlig-Hellman).
+- `data/smooth_curve_analysis.csv` (phân tích chi phí và speedup BSGS vs Pohlig-Hellman).
+- FA1–FA4, `docs/charts/pohlig_hellman_smooth.png`, `results/trackA/summary.md` (bảng slope ± CI, kết luận HA1–HA4).
 
 ## A.11 Thực nghiệm mở rộng — Pollard's rho dài hạn (qua đêm)
 
@@ -206,6 +209,18 @@ nhiêu.
 overnight_max_size` trong D2 chính) + 1 dòng kết luận trong `track_a_report.md`:
 *"Trong N giờ chạy liên tục, Pollard's rho trên phần cứng của nhóm giải được
 ECDLP tới tối đa X bit."*
+
+## A.12 Thực nghiệm mở rộng — Pohlig-Hellman trên đường cong cấp trơn (Smooth-Order Curves)
+
+> **Mục tiêu:** Bổ sung so sánh đối chứng giữa thuật toán generic giải ECDLP ($O(\sqrt{n})$) với thuật toán khai thác cấu trúc phân tích bậc nhóm ($O(\sum e_i (\sqrt{p_i}))$ + CRT) khi bậc nhóm $n$ có toàn bộ thừa số nguyên tố nhỏ (cấp trơn / smooth order).
+
+| Hạng mục | Chi tiết thực nghiệm |
+|---|---|
+| Thuật toán | Pohlig-Hellman (`curves/pohlig_hellman.py`) kết hợp BSGS cho từng nhóm con bậc $p_i^{e_i}$ và định lý thặng dư Trung Hoa (`curves/ecc.py::CRT`) |
+| Corpus thử nghiệm | `data/D1_smooth_curves.csv` (9 đường cong sinh bởi `curves/gen_smooth_curves.ipynb` và `curves/toy_curve_gen.py`, dải bit 16, 24, 32 bit, max prime factor nhỏ) |
+| Phân tích & Bằng chứng | `data/smooth_curve_analysis.csv` (đo độ mượt và speedup lý thuyết từ 4.8x đến 1625x) |
+| Đo đạc thực nghiệm | `data/D2_ecdlp_benchmarks.csv` ghi nhận 53 trials; giải thành công ECDLP trên cấp trơn tới 48-bit chỉ trong vài giây |
+| Đồ thị trực quan | `docs/charts/pohlig_hellman_smooth.png` (so sánh thời gian giải thực tế giữa BSGS và Pohlig-Hellman theo bit size) |
 
 ---
 
@@ -560,15 +575,15 @@ Không có file/report riêng — kết quả gộp vào `docs/system_demo_jwt.m
 | 10–11 | Gộp metric, residual-risk, đưa vào báo cáo | `results/summary.md` | A, C, D |
 
 ## F. Checklist nghiệm thu (đối chiếu đề)
-- [ ] A: brute force vs generic ECDLP phân biệt bằng slope thực nghiệm; curve chuẩn chỉ là negative control.
-- [ ] C: có vulnerable baseline, evidence (repeated-r + recovery), mitigation (RFC 6979 + rotation), **identical re-test**.
-- [ ] D: invalid-curve tách bạch với weak-curve; validation justify theo giao thức; đủ 6 lớp điểm D4; ablation validator.
-- [ ] Mọi track: seed/commit/version ghi trong CSV; không có secret production; assumptions & residual risk nêu rõ.
+- [x] A: brute force vs generic ECDLP phân biệt bằng slope thực nghiệm; curve chuẩn chỉ là negative control; đã mở rộng đối chứng Pohlig-Hellman trên curve cấp trơn (hoàn thành `D1_curves.csv` 53 curves, `D1_smooth_curves.csv` 9 curves, `D2_ecdlp_benchmarks.csv` 53 trials, biểu đồ `pohlig_hellman_smooth.png`).
+- [ ] C: có vulnerable baseline, evidence (repeated-r + recovery), mitigation (RFC 6979 + rotation), **identical re-test** (đã hoàn thành `D3_signatures.csv` gồm 333 chữ ký trên P-256 qua 6 nonce class; đo đạc bước đầu trong `D6_timing.csv`).
+- [ ] D: invalid-curve tách bạch với weak-curve; validation justify theo giao thức; đủ 6 lớp điểm D4; ablation validator (đang tiến hành, `D4_validation.csv` đang chờ nạp fixture).
+- [x] Mọi track: seed/commit/version ghi trong CSV; không có secret production; assumptions & residual risk nêu rõ; tuân thủ `data/schema_definition.json`.
 - [ ] Cử nhân: ≥ 3 track gồm nonce reuse **hoặc** invalid-curve **và** một kịch bản hệ thống hiện hành (C đáp ứng bằng JWT lab).
 - [ ] Cao học: mở rộng CI/phân phối/ablation; cân nhắc nối sang Track E/F.
 
-## G. Câu hỏi mở `[TODO]`
-1. Chốt `n_bits` trần sau pilot Track A (Python hay C?).
+## G. Câu hỏi mở `[TODO]` & Trạng thái giải quyết
+1. **Chốt `n_bits` trần sau pilot Track A (Python hay C?):** *[Đã có kết quả pilot]* Bản Python tối ưu (Miller-Rabin, Brent-Rho trong `ecc.py`) chạy ổn định: Exhaustive Search trần ~22-bit, BSGS và Pollard Rho chạy tốt tới 32-bit trong giới hạn vài giây đến vài phút. Pohlig-Hellman trên smooth curve giải tới 48-bit trong tích tắc. Không bắt buộc phải viết lại C cho ngưỡng demo chuẩn.
 2. Track C dùng JWT thuần hay thêm regtest secp256k1?
 3. Track D: O1, O2 hay cả hai? Có thêm nhánh X25519 không?
-4. Công cụ đếm điểm: Sage hay PARI (`cypari2`)?
+4. **Công cụ đếm điểm: Sage hay PARI (`cypari2`)?:** *[Đã giải quyết]* Đã tích hợp trực tiếp thuật toán đếm điểm bằng BSGS trên khoảng Hasse (`count_points_bsgs`) kết hợp đếm naive trong `curves/toy_curve_gen.py` bằng Python thuần, tự kiểm qua `selftest()`, hoàn toàn độc lập không cần cài thêm Sage/PARI cho các toy curve $p \le 2^{20}$.
