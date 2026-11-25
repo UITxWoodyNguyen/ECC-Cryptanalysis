@@ -22,3 +22,7 @@ m-c31a88909e,C,nonce_recovery,vulnerable,recovery_time_ms,353.08,ms,none,,low_en
 m-3d08cadf2e,C,nonce_recovery,vulnerable,sigs_to_first_repeat,32.0,count,none,,low_entropy,,,low_entropy,dev-sandbox,46b30e2,2026-11-19T01:36:14Z,"entropy_bits=10,seed=4010"
 m-f525d05727,C,nonce_recovery,vulnerable,recovery_time_ms,0.12,ms,none,,low_entropy,,,low_entropy,dev-sandbox,46b30e2,2026-11-19T01:36:14Z,"entropy_bits=14,seed=4014"
 m-7d69e1166f,C,nonce_recovery,vulnerable,recovery_time_ms,0.1,ms,none,,random_ok,,,random_ok,dev-sandbox,46b30e2,2026-11-19T01:36:14Z,
+m-562d4285d2,C,rfc6979_overhead,baseline,wall_time_ns,17781.75274999967,ns,none,,P-256-signer,,,random_ok,dev-sandbox,b62152e,2026-11-25T01:34:00Z,"median ms/sig trên 400 chữ ký, x1000 đổi sang ns"
+m-22e70737a2,C,rfc6979_overhead,patched,wall_time_ns,19026.35949999876,ns,none,,P-256-signer,,,rfc6979,dev-sandbox,b62152e,2026-11-25T01:34:00Z,"median ms/sig trên 400 chữ ký, x1000 đổi sang ns"
+m-3b09b1179c,C,rfc6979_overhead,patched,overhead_ratio,1.07,ratio,none,,P-256-signer,,,rfc6979_vs_random_full_sign,dev-sandbox,b62152e,2026-11-25T01:34:00Z,đo trên toàn bộ quy trình ký (gồm cả scalar mult R=kG)
+m-db5e953669,C,rfc6979_overhead,patched,overhead_ratio,19.988,ratio,none,,P-256-signer,,,rfc6979_vs_random_generate_only,dev-sandbox,b62152e,2026-11-25T01:34:00Z,"đo riêng bước generate() k, không tính scalar mult"
