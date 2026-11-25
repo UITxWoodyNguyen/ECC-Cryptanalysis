@@ -68,9 +68,9 @@
 
 ### 1. Khái niệm
 
-Đường cong Elliptic (Elliptic Curve – EC) là một lớp đường cong đại số. Dạng Weierstrass rút gọn (hợp lệ khi đặc số của trường khác 2 và 3, ví dụ $\colorbox{#f6f6f6}{p > 3}$ nguyên tố):
+Đường cong Elliptic (Elliptic Curve – EC) là một lớp đường cong đại số. Dạng Weierstrass rút gọn (hợp lệ khi đặc số của trường khác 2 và 3, ví dụ $p > 3$ nguyên tố):
 
-$$\colorbox{#f6f6f6}{$\displaystyle y^2 = x^3 + ax + b$}$$
+$$y^2 = x^3 + ax + b$$
 
 - Hệ số $(a, b)$ là **hằng số**.
 - Tọa độ $(x, y)$ phải thuộc một trường $K$ xác định (trong ECC thực tế là trường hữu hạn $\mathbb{F}_p$).
@@ -79,7 +79,7 @@ $$\colorbox{#f6f6f6}{$\displaystyle y^2 = x^3 + ax + b$}$$
 
 Đường cong không được có **điểm lùi (cusp)** hoặc **điểm tự giao (node)**. Điều kiện tương đương: đa thức $f(x) = x^3 + ax + b$ không có nghiệm bội, tức:
 
-$$\colorbox{#f6f6f6}{$\displaystyle \Delta = 4a^3 + 27b^2 \neq 0$}$$
+$$\Delta = 4a^3 + 27b^2 \neq 0$$
 
 (Trên $\mathbb{F}_p$, phép kiểm tra thực hiện **mod p**)
 
@@ -92,11 +92,11 @@ Tập các điểm trên đường cong cùng điểm vô cùng $O$, với phép
 
 | Tính chất | Phát biểu |
 |---|---|
-| Khép kín (Closure) | $\colorbox{#f6f6f6}{P + Q = R}$ cũng nằm trên đường cong |
-| Phần tử đơn vị (Identity) | Tồn tại $O$ (điểm vô cùng, tọa độ xạ ảnh $(0:1:0)$) sao cho $$\colorbox{#f6f6f6}{$\displaystyle P + O = P, \quad \forall P$}$$ |
-| Phần tử nghịch đảo (Inverse) | Mọi $P = (x, y)$ có $-P = (x, -y)$ sao cho $$\colorbox{#f6f6f6}{$\displaystyle P + (-P) = O$}$$ |
-| Kết hợp (Associativity) | $$\colorbox{#f6f6f6}{$\displaystyle P + (Q + R) = (P + Q) + R$}$$ |
-| Giao hoán (Commutativity) | $$\colorbox{#f6f6f6}{$\displaystyle P + Q = Q + P$}$$ |
+| Khép kín (Closure) | $P + Q = R$ cũng nằm trên đường cong |
+| Phần tử đơn vị (Identity) | Tồn tại $O$ (điểm vô cùng, tọa độ xạ ảnh $(0:1:0)$) sao cho $P + O = P, \quad \forall P$ |
+| Phần tử nghịch đảo (Inverse) | Mọi $P = (x, y)$ có $-P = (x, -y)$ sao cho $P + (-P) = O$ |
+| Kết hợp (Associativity) | $P + (Q + R) = (P + Q) + R$ |
+| Giao hoán (Commutativity) | $P + Q = Q + P$ |
 
 ### 4. Phép cộng theo hình học (Geometric Addition)
 
@@ -106,11 +106,11 @@ Cho $P = (x_1, y_1)$ và $Q = (x_2, y_2)$ trên EC.
 
 1. Nếu $P \neq Q$: nối $P, Q$ thành một đường thẳng.
 2. Tìm giao điểm thứ 3 của đường thẳng với EC, gọi là $R$.
-3. Lấy $R'$ đối xứng với $R$ qua trục $x$. Khi đó $\colorbox{#f6f6f6}{P + Q = R'}$.
+3. Lấy $R'$ đối xứng với $R$ qua trục $x$. Khi đó $P + Q = R'$.
 
 **Nguyên tắc:** 3 điểm thẳng hàng có tổng bằng $O$:
 
-$$\colorbox{#f6f6f6}{$\displaystyle P + Q + R = O \iff P + Q = -R$}$$
+$$P + Q + R = O \iff P + Q = -R$$
 
 **Các trường hợp đặc biệt:**
 
@@ -120,7 +120,7 @@ $$\colorbox{#f6f6f6}{$\displaystyle P + Q + R = O \iff P + Q = -R$}$$
 
 **Phép nhân vô hướng (Scalar multiplication):** cộng điểm $P$ với chính nó $n$ lần:
 
-$$\colorbox{#f6f6f6}{$\displaystyle nP = \underbrace{P + P + \dots + P}_{n\ \text{lần}}$}$$
+$$nP = \underbrace{P + P + \dots + P}_{n\ \text{lần}}$$
 
 ### 5. Phép cộng theo đại số (Algebraic Addition)
 
@@ -128,23 +128,23 @@ Cho $P(x_P, y_P)$ và $Q(x_Q, y_Q)$.
 
 **Trường hợp $P \neq Q$ ($x_P \neq x_Q$)** – hệ số góc đường thẳng qua hai điểm:
 
-$$\colorbox{#f6f6f6}{$\displaystyle m = \frac{y_P - y_Q}{x_P - x_Q}$}$$
+$$m = \frac{y_P - y_Q}{x_P - x_Q}$$
 
 Giao điểm thứ 3 là $R = (x_R, y_R)$:
 
-$$\colorbox{#f6f6f6}{$\displaystyle x_R = m^2 - x_P - x_Q, \qquad y_R = y_P + m(x_R - x_P)$}$$
+$$x_R = m^2 - x_P - x_Q, \qquad y_R = y_P + m(x_R - x_P)$$
 
 Do $P + Q = -R$, kết quả của phép cộng là:
 
-$$\colorbox{#f6f6f6}{$\displaystyle P + Q = (x_R,\ -y_R)$}$$
+$$P + Q = (x_R,\ -y_R)$$
 
 **Trường hợp $P = Q$ (nhân đôi)** – dùng đạo hàm làm hệ số góc tiếp tuyến:
 
-$$\colorbox{#f6f6f6}{$\displaystyle m = \frac{3x_P^2 + a}{2y_P}$}$$
+$$m = \frac{3x_P^2 + a}{2y_P}$$
 
 (Đạo hàm của $y = \pm\sqrt{x^3 + ax + b}$ tại $x_P$.) Công thức rút gọn:
 
-$$\colorbox{#f6f6f6}{$\displaystyle x_{2P} = m^2 - 2x_P, \qquad y_{2P} = m(x_P - x_{2P}) - y_P$}$$
+$$x_{2P} = m^2 - 2x_P, \qquad y_{2P} = m(x_P - x_{2P}) - y_P$$
 
 > [!tip]
 >- Nếu $y_P = 0$ thì $2P = O$ (tiếp tuyến thẳng đứng).
@@ -176,11 +176,11 @@ Tọa độ Affine cần một phép nghịch đảo modulo (rất tốn kém) �
 
 **Định nghĩa:** Điểm Jacobian $(X, Y, Z)$, $Z \neq 0$ biểu diễn điểm Affine:
 
-$$\colorbox{#f6f6f6}{$\displaystyle x = \frac{X}{Z^2}, \qquad y = \frac{Y}{Z^3}$}$$
+$$x = \frac{X}{Z^2}, \qquad y = \frac{Y}{Z^3}$$
 
 **Phương trình EC:**
 
-$$\colorbox{#f6f6f6}{$\displaystyle Y^2 = X^3 + a\,X Z^4 + b\,Z^6$}$$
+$$Y^2 = X^3 + a\,X Z^4 + b\,Z^6$$
 
 **Tính chất:**
 
@@ -192,24 +192,24 @@ $$\colorbox{#f6f6f6}{$\displaystyle Y^2 = X^3 + a\,X Z^4 + b\,Z^6$}$$
 ### Công thức nhân đôi $2P$, với $P = (X_1, Y_1, Z_1)$
 
 Ta có:
-$$\colorbox{#f6f6f6}{$\displaystyle \begin{aligned}
+$$\begin{aligned}
 S &= 4X_1Y_1^2 \\
 M &= 3X_1^2 + aZ_1^4 \\
 X_3 &= M^2 - 2S \\
 Y_3 &= M(S - X_3) - 8Y_1^4 \\
 Z_3 &= 2Y_1Z_1
-\end{aligned}$}$$
+\end{aligned}$$
 
 ### Công thức cộng $P_1 + P_2$, với $P_i = (X_i, Y_i, Z_i)$
 Ta có:
-$$\colorbox{#f6f6f6}{$\displaystyle \begin{aligned}
+$$\begin{aligned}
 U_1 &= X_1Z_2^2, & U_2 &= X_2Z_1^2 \\
 S_1 &= Y_1Z_2^3, & S_2 &= Y_2Z_1^3 \\
 H &= U_2 - U_1, & R &= S_2 - S_1 \\
 X_3 &= R^2 - H^3 - 2U_1H^2 \\
 Y_3 &= R(U_1H^2 - X_3) - S_1H^3 \\
 Z_3 &= H\,Z_1Z_2
-\end{aligned}$}$$
+\end{aligned}$$
 
 >[!tip]
 >**Xử lý trường hợp đặc biệt:**
@@ -231,17 +231,17 @@ Trong ECC, đường cong được xét trên **trường hữu hạn $\mathbb{F
 
 ### 1. Các khái niệm nền tảng
 
-- **Bậc của điểm (order):** số nguyên dương $n$ nhỏ nhất sao cho $\colorbox{#F6F6F6}{nP = O}$
+- **Bậc của điểm (order):** số nguyên dương $n$ nhỏ nhất sao cho $nP = O$
 - **Điểm gốc (generator / base point) $G$:** sinh ra nhóm con cyclic bậc $n$ (thường chọn $n$ là số nguyên tố).
-- **Số điểm của đường cong:**  $\colorbox{#F6F6F6}{\#E}$ (tính cả $O$).
-- **Cofactor:**  $\colorbox{#F6F6F6}{h = \#E / n}$.
+- **Số điểm của đường cong:**  $\#E$ (tính cả $O$).
+- **Cofactor:**  $h = \#E / n$.
 - **Double-and-add:** tính $nP$ trong $O(\log n)$ phép toán thay vì cộng $n$ lần.
 
 ### 2. Định lý Hasse
 
 Với đường cong elliptic $E$ trên $\mathbb{F}_p$, số điểm (tính cả $O$) là:
 
-$$\colorbox{#f6f6f6}{$\displaystyle \#E(\mathbb{F}_p) = p + 1 - t, \qquad |t| \le 2\sqrt{p}$}$$
+$$\#E(\mathbb{F}_p) = p + 1 - t, \qquad |t| \le 2\sqrt{p}$$
 
 Tương đương: $\left|\#E - (p+1)\right| \le 2\sqrt{p}$. 
 Trong đó $t$ là **vết Frobenius** (trace of Frobenius).
@@ -286,11 +286,11 @@ $$\#E(\mathbb{F}_p)=1+p+\sum_{x\in\mathbb{F}_p}\left(\frac{x^3+ax+b}{p}\right).$
 **Nền tảng: định lý Lagrange.** 
 Điểm $G$ sinh ra nhóm con cyclic kích thước $n$ ($n$ chính là bậc của $G$). Theo Lagrange, kích thước nhóm con luôn chia hết kích thước nhóm lớn:
 
-$$\colorbox{#f6f6f6}{$\displaystyle n \mid \#E$}$$
+$$n \mid \#E$$
 
 **Định nghĩa:**
 
-$$\colorbox{#f6f6f6}{$\displaystyle h = \frac{\#E}{n}$}$$
+$$h = \frac{\#E}{n}$$
 
 Cofactor cho biết nhóm điểm của đường cong lớn gấp bao nhiêu lần nhóm con do $G$ sinh ra.
 
@@ -340,7 +340,7 @@ Biểu diễn $n$ ở dạng nhị phân và dùng nhân đôi và cộng thay c
 
 **Ví dụ:** $13 = 1101_2 = 8 + 4 + 1$
 
-$$\colorbox{#f6f6f6}{$\displaystyle 13P = 8P + 4P + P$}$$
+$$13P = 8P + 4P + P$$
 
 Chỉ cần tính $P \to 2P \to 4P \to 8P$ (3 lần nhân đôi), rồi cộng 2 lần, tổng cộng 5 phép toán thay vì 12 phép cộng.
 
@@ -406,10 +406,10 @@ Và $19G = O$. Ta thấy $18G = (5, 16) = -G$ vì $16 = 17 - 1$, đúng với qu
 
 Cho hai điểm $G$ và $Q$ với quan hệ:
 
-$$\colorbox{#f6f6f6}{$\displaystyle Q = dG$}$$
+$$Q = dG$$
 
 - **Công khai:** đường cong, điểm gốc $G$ (cùng $n$, $h$), và $Q = dG$ (khóa công khai).
-- **Khóa bí mật:** số nguyên $$\colorbox{#f6f6f6}{$\displaystyle d \in [1, n-1]$}$$
+- **Khóa bí mật:** số nguyên $d \in [1, n-1]$.
 
 Tính $Q$ từ $d$ rất nhanh (double-and-add), nhưng tìm $d$ từ $G$ và $Q$ là bài toán **ECDLP** – chưa có thuật toán hiệu quả.
 
