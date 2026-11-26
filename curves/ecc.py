@@ -372,6 +372,30 @@ class Point:
             n >>= 1
         return R
 
+    def to_jacobian(self) -> "JacobianPoint":
+        """Chuyển đổi điểm Affine sang tọa độ Jacobian (X:Y:Z) với Z=1 (hoặc Z=0 nếu vô cực)."""
+        return JacobianPoint.from_affine(self)
+
+    def montgomery_ladder(self, n: int) -> "Point":
+        """
+        Nhân vô hướng bằng Montgomery ladder (constant-operation pattern).
+        Mẫu thao tác cố định theo bit-length, giảm timing leakage (Section III.4 math_notes.md).
+        """
+        if n < 0:
+            return (-self).montgomery_ladder(-n)
+        if n == 0 or self.is_infinity:
+            return Point(self.curve, is_infinity=True)
+        R0 = Point(self.curve, is_infinity=True)
+        R1 = self
+        for i in range(n.bit_length() - 1, -1, -1):
+            if (n >> i) & 1:
+                R0 = R0 + R1
+                R1 = R1 + R1
+            else:
+                R1 = R0 + R1
+                R0 = R0 + R0
+        return R0
+
     def __rmul__(self, n: int):
         return self.__mul__(n)
 
@@ -388,6 +412,158 @@ class Point:
             return Point(self.curve, nums.x, nums.y)
         except ValueError:
             return Point(self.curve, is_infinity=True)
+
+
+class JacobianPoint:
+    """
+    Điểm trên đường cong Weierstrass trong tọa độ Jacobian (X:Y:Z) (Section II math_notes.md).
+    Biểu diễn điểm Affine (x, y) với x = X / Z^2, y = Y / Z^3 (Z != 0).
+    Điểm vô cực O được biểu diễn với Z = 0 (thường dùng 1:1:0).
+    Loại bỏ phép nghịch đảo modulo trong các bước cộng/nhân đôi trung gian.
+    """
+    def __init__(self, curve: ECC, X: int, Y: int, Z: int):
+        self.curve = curve
+        self.X = X % curve.p
+        self.Y = Y % curve.p
+        self.Z = Z % curve.p
+        self.is_infinity = (self.Z == 0)
+
+    @classmethod
+    def from_affine(cls, P: Point) -> "JacobianPoint":
+        """Chuyển điểm Affine sang Jacobian: (x, y) -> (x, y, 1), O -> (1, 1, 0)."""
+        if P.is_infinity:
+            return cls(P.curve, 1, 1, 0)
+        return cls(P.curve, P.x, P.y, 1)
+
+    def to_affine(self) -> Point:
+        """Chuyển điểm Jacobian về Affine: chỉ tốn 1 phép nghịch đảo duy nhất mod p."""
+        if self.is_infinity or self.Z == 0:
+            return Point(self.curve, is_infinity=True)
+        p = self.curve.p
+        z_inv = pow(self.Z, -1, p)
+        z_inv2 = (z_inv * z_inv) % p
+        z_inv3 = (z_inv2 * z_inv) % p
+        x = (self.X * z_inv2) % p
+        y = (self.Y * z_inv3) % p
+        return Point(self.curve, x, y)
+
+    def __neg__(self) -> "JacobianPoint":
+        if self.is_infinity:
+            return self
+        return JacobianPoint(self.curve, self.X, (-self.Y) % self.curve.p, self.Z)
+
+    def double(self) -> "JacobianPoint":
+        """Nhân đôi điểm 2P trong tọa độ Jacobian theo công thức Section II.1 math_notes.md."""
+        if self.is_infinity or self.Y == 0:
+            return JacobianPoint(self.curve, 1, 1, 0)
+        p = self.curve.p
+        X1, Y1, Z1 = self.X, self.Y, self.Z
+        Y1_sq = (Y1 * Y1) % p
+        S = (4 * X1 * Y1_sq) % p
+        Z1_4 = pow(Z1, 4, p)
+        M = (3 * X1 * X1 + self.curve.a * Z1_4) % p
+        X3 = (M * M - 2 * S) % p
+        Y1_4 = (Y1_sq * Y1_sq) % p
+        Y3 = (M * (S - X3) - 8 * Y1_4) % p
+        Z3 = (2 * Y1 * Z1) % p
+        return JacobianPoint(self.curve, X3, Y3, Z3)
+
+    def __add__(self, other: "JacobianPoint") -> "JacobianPoint":
+        """Cộng hai điểm P1 + P2 trong tọa độ Jacobian theo công thức Section II.2 math_notes.md."""
+        if self.curve != other.curve:
+            raise ValueError("Cannot add points from different curves")
+        if self.is_infinity:
+            return other
+        if other.is_infinity:
+            return self
+        p = self.curve.p
+        Z1_sq = (self.Z * self.Z) % p
+        Z2_sq = (other.Z * other.Z) % p
+        U1 = (self.X * Z2_sq) % p
+        U2 = (other.X * Z1_sq) % p
+        S1 = (self.Y * Z2_sq * other.Z) % p
+        S2 = (other.Y * Z1_sq * self.Z) % p
+        H = (U2 - U1) % p
+        R = (S2 - S1) % p
+        if H == 0:
+            if R == 0:
+                return self.double()
+            return JacobianPoint(self.curve, 1, 1, 0)
+        H_sq = (H * H) % p
+        H_cu = (H_sq * H) % p
+        U1_H2 = (U1 * H_sq) % p
+        X3 = (R * R - H_cu - 2 * U1_H2) % p
+        Y3 = (R * (U1_H2 - X3) - S1 * H_cu) % p
+        Z3 = (H * self.Z * other.Z) % p
+        return JacobianPoint(self.curve, X3, Y3, Z3)
+
+    def __sub__(self, other: "JacobianPoint") -> "JacobianPoint":
+        return self + (-other)
+
+    def __mul__(self, n: int) -> "JacobianPoint":
+        if n < 0:
+            return (-self) * (-n)
+        if n == 0 or self.is_infinity:
+            return JacobianPoint(self.curve, 1, 1, 0)
+        R = JacobianPoint(self.curve, 1, 1, 0)
+        Q = self
+        while n > 0:
+            if n & 1:
+                R = R + Q
+            Q = Q.double()
+            n >>= 1
+        return R
+
+    def __rmul__(self, n: int) -> "JacobianPoint":
+        return self.__mul__(n)
+
+    def __repr__(self) -> str:
+        return f"JacobianPoint(Infinity)" if self.is_infinity else f"JacobianPoint({self.X}, {self.Y}, {self.Z})"
+
+
+# ======= PUBLIC KEY VALIDATION & DOMAIN CRITERIA ============
+
+def validate_public_key(P: Point, order: int | None = None) -> tuple[bool, str]:
+    """
+    Quy trình validation điểm công khai theo Section VI.2 math_notes.md & SP 800-56A:
+    1. Kiểm tra điểm vô cực (P != O)
+    2. Kiểm tra miền tọa độ (0 <= x, y < p)
+    3. Kiểm tra on-curve (y^2 == x^3 + ax + b mod p)
+    4. Kiểm tra subgroup membership ([n]P == O) nếu biết bậc nhóm con order n
+    """
+    if P.is_infinity:
+        return False, "Point at infinity"
+    p = P.curve.p
+    if not (0 <= P.x < p and 0 <= P.y < p):
+        return False, "Coordinates out of range [0, p-1]"
+    if not P.curve.is_on_curve(P.x, P.y):
+        return False, "Point is not on the curve (invalid curve)"
+    if order is not None:
+        if not (order * P).is_infinity:
+            return False, f"Point does not belong to prime subgroup of order {order}"
+    return True, "Valid"
+
+
+def cofactor_clearing(P: Point, h: int) -> Point:
+    """Thực hiện cofactor clearing: P* = [h]P theo SP 800-56A để triệt tiêu thành phần subgroup nhỏ."""
+    return h * P
+
+
+def embedding_degree(n: int, p: int, max_k: int = 100) -> int | None:
+    """
+    Tính embedding degree k nhỏ nhất sao cho n | (p^k - 1), tức p^k == 1 (mod n).
+    Dùng để phát hiện đường cong yếu trước tấn công MOV/Frey-Rück (Section V.7 math_notes.md).
+    Trả về None nếu không tìm thấy k <= max_k.
+    """
+    if n <= 1 or p % n == 0:
+        return None
+    p_mod = p % n
+    val = p_mod
+    for k in range(1, max_k + 1):
+        if val == 1:
+            return k
+        val = (val * p_mod) % n
+    return None
 
 
 # ======= ORDER COMPUTATION ============
